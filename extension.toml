@@ -1,0 +1,89 @@
+# DaVinci Resolve: the Python node's bridge (src/messageboard/agent/resolve.py) as an extension, with
+# what that node did around it (publishing renders and stills, notes as markers, auto renders), so
+# the Rust node only runs it (MB-354). Format: docs/dev/extensions.md.
+
+[extension]
+id = "resolve"
+name = "DaVinci Resolve"
+version = "0.2.1"
+publisher = "aurelio"
+summary = "Preview renders and stills of your Resolve timelines, and board notes as timeline markers."
+node = ">=0.1,<1"
+platforms = ["macos-arm64", "macos-x86_64"]
+
+[run]
+command = ["python", "-m", "pointman_resolve"]
+runtime = "python3.12"
+
+[detect]
+macos = ["/Applications/DaVinci Resolve/DaVinci Resolve.app"]
+
+[permissions]
+drives_apps = ["DaVinci Resolve"]
+gpu = true
+
+[settings]
+type = "object"
+
+[settings.properties.preview_height]
+type = "integer"
+title = "Preview height"
+description = "Previews are rendered at this height, or the timeline's if it's smaller."
+enum = [480, 720, 1080]
+default = 720
+
+[settings.properties.auto_render_idle_minutes]
+type = "integer"
+title = "Render a preview when idle (minutes)"
+description = "After the edit changes and the Mac has been idle this long. 0 is off."
+minimum = 0
+default = 0
+
+[settings.properties.markers]
+type = "boolean"
+title = "Notes as markers"
+description = "Notes on a Resolve preview become markers on its timeline: purple while open, green once resolved."
+default = true
+
+[[commands]]
+kind = "resolve.render"
+title = "Render a preview"
+params = { type = "object", properties = { timeline = { type = "string", description = "The timeline's name; the open one if left out." }, height = { type = "integer", minimum = 144, maximum = 2160 }, thread_id = { type = "integer", description = "Post it in this thread; otherwise in the project's Resolve previews thread." } }, additionalProperties = false }
+lane = "resolve"
+cancellable = true
+ready_when = "connected"
+outputs = ["video"]
+
+[[commands]]
+kind = "resolve.still"
+title = "Grab a still"
+params = { type = "object", properties = { thread_id = { type = "integer" } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+outputs = ["image"]
+
+[[commands]]
+kind = "resolve.marker"
+title = "Mirror a note as a marker"
+params = { type = "object", required = ["note", "project", "timeline"], properties = { note = { type = "object" }, project = { type = "string" }, timeline = { type = "string" } } }
+lane = "resolve"
+ready_when = "connected"
+
+[[tools]]
+name = "resolve_render"
+command = "resolve.render"
+description = "Render a Resolve timeline (the open one, or one by name) to a small preview with its timeline layout, and post it in the thread given or the project's Resolve previews thread. Takes minutes; returns the request's id."
+
+[[tools]]
+name = "resolve_still"
+command = "resolve.still"
+description = "Grab the frame under Resolve's playhead as a PNG and post it."
+returns = "result"
+
+[[events]]
+name = "resolve.status"
+description = "connected (and why not), Resolve's version, the page, the open project and timeline (name, fps, duration, timecode, tracks, markers), and whether it's rendering."
+
+[[files]]
+extensions = [".drp"]
+open_with = "DaVinci Resolve"

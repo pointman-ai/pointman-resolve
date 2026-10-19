@@ -27,7 +27,7 @@ made while Resolve is closed waits until it's open again.
 
 ## Commands
 
-Agents get `resolve_render` and `resolve_still` as tools, or call any command on the Mac with
+Agents get `resolve_render`, `resolve_still`, `resolve_snapshot`, `resolve_diff` and `resolve_check` as tools, or call any command on the Mac with
 `run_on_machine`. Every Resolve call runs on one lane, one at a time, since Resolve's API isn't meant to be
 driven from several threads at once.
 
@@ -36,6 +36,9 @@ driven from several threads at once.
 | `resolve.render` | `timeline?`, `height?` (144–2160), `thread_id?` | Renders a timeline (the open one, or one by name) to a small MP4 (H.265 where Resolve has it, else H.264) and posts it, with the timeline's layout (tracks, clips and markers), in the thread given or the project's Resolve previews thread. Takes minutes; cancellable |
 | `resolve.still` | `thread_id?` | The frame under the playhead, as a PNG, posted |
 | `resolve.marker` | `note`, `project`, `timeline` | Mirrors one note as a marker. `null` when that project isn't the one open, so it's tried again later |
+| `resolve.snapshot` | `otio?` (default true) | The open timeline as data, **read only**: every track, item and marker, saved as `snapshot-<utc>.json` with Resolve's OTIO export beside it (below). A few seconds |
+| `resolve.diff` | `timeline?`, `a?`, `b?`, `full?` | What changed between two snapshots of a timeline, by default its latest and the one before. Reads files only |
+| `resolve.check` | `timeline?`, `snapshot?` | A snapshot against the OTIO export taken with it, item by item. Reads files only |
 
 - **Your project is left as it was:** a render saves the project's render settings to a temporary preset
   and restores them after. It also goes back to the page and timeline you were on.
@@ -54,10 +57,49 @@ driven from several threads at once.
   has changed (clips, trims, tracks or markers) and neither it nor the Mac's keyboard and mouse have been
   touched for that long. An edit that's already been rendered isn't rendered again.
 
+## The timeline as data
+
+`resolve.snapshot`, `resolve.diff` and `resolve.check` (`pointman_resolve/timeline/`) give agents the edit as
+data, so they can follow it without watching your screen.
+
+- **Read only, by construction:** the snapshot wraps every Resolve object in `ReadOnly`, which lets only
+  `Get…`, `Is…` and `Export…` calls through. It can't save, switch project or timeline, move the playhead,
+  add a marker or start a job. It runs on the "resolve" lane like everything else here.
+- **A snapshot** holds the timeline (name, id, fps, start and end frame, size), its tracks, every item
+  (id, kind, track, record frame, length, in-point, source time and frame, media fps and file, type,
+  properties, fades, speed, enabled, colour, grade nodes, linked items, clip markers), the timeline
+  markers, and our own edits since the previous snapshot. Snapshots live in
+  `~/.pointman-resolve/snapshots/<project>/<timeline>/`. The commands take snapshots by file name,
+  never by path.
+- **A diff** matches items by Resolve's `GetUniqueId`, which survives ripples, trims and restarts. It
+  sorts them into kept, changed, moved, trimmed, new and gone. A new item cut from an old one (a razor)
+  names it as `parent`, by source range, not position. Markers are new, changed, gone or moved, and
+  `ours` lists what our own tools did, from `~/.pointman-resolve/journal.jsonl`.
+- **Units** (Resolve 21.1): `in` is `GetLeftOffset`, the in-point in timeline frames, and it matched
+  Resolve's OTIO on every item. `src_start` is seconds on the media's own timecode. Pan, tilt and crops
+  are in output pixels (OTIO stores them as a fraction of half the frame).
+- From a shell: `python -m pointman_resolve.timeline.cli snapshot | diff A B | check S`.
+
 ## Status
 
 `resolve.status`, every 10 s: `connected` (and why not), Resolve's version, the page it's on, the open
-project and timeline (name, fps, duration, timecode, tracks and markers), and whether it's rendering.
+project and timeline (name, fps, duration, timecode, tracks and markers), and whether it's rendering. It
+says `blocked` when Resolve answers scripts with nothing, which is what a modal dialog does.
+
+`health.check` answers with one part, DaVinci Resolve: `ok`, `stopped` (not open) or `failing` (scripting
+off, or blocked by a dialog), with its version and why. It reads the latest status; it never calls
+Resolve itself.
+
+## Tests
+
+```
+uv run --no-project --python 3.12 --with pytest python -m pytest tests
+```
+
+The timeline modules run against a fake Resolve (`tests/fake.py`). `tests/test_extension.py` runs
+`python -m pointman_resolve` the way the node does and talks to it over JSON-RPC, with Resolve made to
+look absent. It needs the node's `pointman_extension.py` (`$POINTMAN_EXTENSION_SDK`, or the one the node
+installed).
 
 ## Settings
 

@@ -33,6 +33,10 @@ except ImportError:                 # a node from before the rename (thread 2255
 
 from . import media
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
+from .timeline import check as timeline_check
+from .timeline import diff as timeline_diff
+from .timeline import snapshot as timeline_snapshot
+from .timeline.readonly import ReadOnly
 
 ext = Extension()
 bridge = ResolveBridge()
@@ -77,6 +81,7 @@ class State:
 state = State()
 seen: dict[str, tuple[str, float]] = {}        # project/timeline -> (its digest, when first seen)
 node: dict = {"publishes": None}               # whether the node publishes for us (publishes())
+last_status: dict = {}                         # poll_status's latest, for health.check (off the lane)
 
 
 def poll_status() -> None:
@@ -91,6 +96,12 @@ def poll_status() -> None:
             sig = bridge.signature()
             last_digest.update(at=time.monotonic(), key=key, digest=sig[2] if sig else None)
         tl["digest"] = last_digest["digest"]
+    if st.get("connected") and st.get("page") is None:
+        # what a modal dialog does (Resolve's Software Update one, 16 Oct): scripting answers, but with
+        # nothing; saves and project loads fail until it's dealt with
+        st["blocked"] = "Resolve answers scripts with nothing: a dialog is probably open in it"
+    last_status.clear()
+    last_status.update(st)
     ext.event("resolve.status", st)
 
 
@@ -255,6 +266,95 @@ def marker(job):
         return bridge.apply_note(p["note"], p["project"], p["timeline"])
     except ResolveUnavailable as e:
         raise unavailable(e) from None
+
+
+# ------------------------------------------------------------ the timeline as data: read only
+
+
+def stored(timeline: str | None) -> Path:
+    """The snapshots folder of the timeline named, or of the one snapshotted last."""
+    folder = timeline_snapshot.timeline_folder(timeline)
+    if folder is None:
+        raise RuntimeError("no snapshots" + (f" of {timeline!r}" if timeline else "") + " yet: take one with resolve.snapshot")
+    return folder
+
+
+def read(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@ext.command("resolve.snapshot")
+def snapshot_cmd(job):
+    """Every track, item, property and marker of the open timeline as JSON, with Resolve's OTIO export
+    beside it, in ~/.pointman-resolve/snapshots/<project>/<timeline>/. ReadOnly lets only Get, Is and
+    Export calls through, so it can't save, switch, move the playhead or start a job."""
+    try:
+        resolve = ReadOnly(bridge.connect())
+    except ResolveUnavailable as e:
+        raise unavailable(e) from None
+    project = resolve.GetProjectManager().GetCurrentProject()
+    tl = project.GetCurrentTimeline() if project else None
+    if not project or not tl:
+        raise Retry("no project or timeline open in Resolve")
+    path = timeline_snapshot.write(resolve, timeline_snapshot.store_dir(project.GetName(), tl.GetName()),
+                                   otio=job.params.get("otio", True))
+    snap = read(path)
+    return {"snapshot": str(path), "otio": str(path.with_suffix(".otio")) if (snap.get("otio") or {}).get("file") else None,
+            "project": snap["project"]["name"], "timeline": snap["timeline"]["name"], "items": len(snap["items"]),
+            "markers": len(snap["markers"]), "journal": len(snap["journal"]), "previous": snap["previous"],
+            "errors": snap["errors"], "took_s": snap["took_s"]}
+
+
+@ext.command("resolve.diff")
+def diff_cmd(job):
+    """What changed between two snapshots of a timeline: by default its latest and the one before.
+    Snapshots are named, never given as paths, so nothing outside the store is read."""
+    p = job.params
+    folder = stored(p.get("timeline"))
+    names = [s.name for s in timeline_snapshot.snapshots(folder)]
+    b = timeline_snapshot.named(folder, p.get("b") or names[-1])
+    if p.get("a"):
+        a = timeline_snapshot.named(folder, p["a"])
+    else:
+        previous = read(b).get("previous") or (names[-2] if len(names) > 1 else None)
+        if not previous:
+            raise RuntimeError("only one snapshot of this timeline so far: take another to compare")
+        a = timeline_snapshot.named(folder, previous)
+    result = timeline_diff.diff(read(a), read(b))
+    out = folder / f"diff-{a.stem.removeprefix('snapshot-')}-{b.stem.removeprefix('snapshot-')}.json"
+    out.write_text(json.dumps(result, indent=1), encoding="utf-8")
+    if p.get("full"):
+        return {**result, "file": str(out)}
+    # the lists can run to thousands (a ripple moves everything after it): the first 50 of each, and the file
+    cut = {k: result[k][:50] for k in ("changed", "moved", "trimmed", "new", "gone")}
+    return {**{k: result[k] for k in ("a", "b", "note", "counts", "markers", "ours", "timeline", "tracks")}, **cut,
+            "truncated": any(len(result[k]) > 50 for k in cut), "file": str(out)}
+
+
+@ext.command("resolve.check")
+def check_cmd(job):
+    """A snapshot (by default the latest) against the OTIO export taken with it, item by item."""
+    folder = stored(job.params.get("timeline"))
+    name = job.params.get("snapshot") or timeline_snapshot.snapshots(folder)[-1].name
+    return timeline_check.check(timeline_snapshot.named(folder, name))
+
+
+@ext.method("health.check")
+def health(params):
+    """One part, DaVinci Resolve, from the latest resolve.status. Methods run off the resolve lane, so
+    this never calls Resolve itself."""
+    st = dict(last_status)
+    if not st:
+        state, why = "unknown", "no status from Resolve yet"
+    elif not st.get("connected"):
+        reason = st.get("reason") or "not connected"
+        state, why = ("failing" if "not accepting scripts" in reason else "stopped"), reason
+    elif st.get("blocked"):
+        state, why = "failing", st["blocked"]
+    else:
+        state, why = "ok", None
+    return [{"id": "resolve", "kind": "app", "name": "DaVinci Resolve", "version": st.get("version"),
+             "state": state, "needs": [], "why": why}]
 
 
 # ------------------------------------------------------------ by itself: markers and auto renders

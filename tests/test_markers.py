@@ -30,20 +30,19 @@ def test_which_markers_call_an_agent():
     assert found[1].text == "@editor lip sync is off"            # "Marker 3" is Resolve's default name: left out
 
 
-def test_routes_thread_default_agent_and_dm():
+def test_routes_a_project_then_the_fallback():
     routes = M.load_routes()                                     # no routes.toml yet: the example
-    assert M.route(routes, "feat-flow-with-spacesheep", None) == {"thread": 10399, "channel": None, "mention": "editor",
-                                                                  "unknown": None}
+    assert M.route(routes, "feat-flow-with-spacesheep", None) == {"thread": 10399, "mention": "editor", "unknown": None,
+                                                                  "routed": True, "agent": "editor"}
     assert M.route(routes, "feat-flow-with-spacesheep", "rtx-render")["mention"] == "rtx-render"
-    # no unmapped channel set yet: nowhere to post
-    assert M.route(routes, "some-other-project", None) == {"thread": None, "channel": None, "mention": "james",
-                                                           "unknown": None}
-    routes["unmapped"] = {"channel": 42}
-    assert M.route(routes, "some-other-project", "editor") == {"thread": None, "channel": 42, "mention": "editor",
-                                                               "unknown": None}
-    routes["unmapped"] = {"thread": 13661, "channel": 42}       # a thread wins
-    assert M.route(routes, "some-other-project", None) == {"thread": 13661, "channel": None, "mention": "james",
-                                                           "unknown": None}
+    # no route and no fallback yet: nowhere to post
+    assert M.route(routes, "some-other-project", None) == {"thread": None, "mention": "james", "unknown": None,
+                                                           "routed": False, "agent": "james"}
+    fb = {"thread": 13661, "agent": "editor"}
+    assert M.route(routes, "some-other-project", None, fb) == {"thread": 13661, "mention": "editor", "unknown": None,
+                                                               "routed": False, "agent": "editor"}
+    assert M.route(routes, "some-other-project", "rtx-render", fb)["mention"] == "rtx-render"
+    assert M.route(routes, "feat-flow-with-spacesheep", None, fb)["thread"] == 10399   # a route wins
 
 
 def test_timecode_and_the_post():
@@ -123,8 +122,48 @@ def test_an_unknown_handle_goes_to_the_projects_agent_with_a_note():
     assert M.route(routes, "feat-flow-with-spacesheep", "rtx-render")["unknown"] is None   # listed: trusted
     assert M.route(routes, "feat-flow-with-spacesheep", "james")["unknown"] is None        # the person always is
     del routes["agents"]                                                                   # no list: any handle
-    assert M.route(routes, "feat-flow-with-spacesheep", "editr") == {"thread": 10399, "channel": None,
-                                                                     "mention": "editr", "unknown": None}
+    assert M.route(routes, "feat-flow-with-spacesheep", "editr") == {"thread": 10399, "mention": "editr", "unknown": None,
+                                                                     "routed": True, "agent": "editor"}
     snap, _ = take(ReadOnly(fake.Resolve(fake.sample_timeline())))
     text = M.compose(M.Call(25, mk("@editr look"), "editr"), snap, "editor", unknown="editr")
     assert text.startswith("@editor ") and "`@editr`, which I didn't recognise, so it's here for @editor" in text
+
+
+def test_the_fallback_starts_from_the_last_marker_from_a_routed_project():
+    assert M.Fallback(state=M.State(), routes=M.load_routes()).get() is None    # a fresh machine: none
+    s = M.State()
+    s.put("tl-1", "300-a", {"post": 14418, "status": "done", "project": "feat-flow-with-spacesheep", "at": 1.0})
+    s.put("tl-9", "10-b", {"post": 14500, "status": "posted", "project": "no-route", "at": 2.0})
+    fb = M.Fallback(state=s, routes=M.load_routes())
+    assert (fb.get()["thread"], fb.get()["agent"], fb.get()["project"]) == (10399, "editor", "feat-flow-with-spacesheep")
+    was = fb.set(13661, "@rtx-render", by="editor")
+    assert was["thread"] == 10399
+    again = M.Fallback()                                          # kept on disk; the state isn't read again
+    assert (again.get()["thread"], again.get()["agent"], again.get()["by"]) == (13661, "rtx-render", "editor")
+    again.set(13661, "rtx-render", by="marker")                   # the same place: who moved it stays
+    assert M.Fallback().get()["by"] == "editor"
+
+
+def test_a_renamed_project_is_known_by_its_ids():
+    routes = M.load_routes()
+    s = M.State()
+    s.put("tl-1", "300-a", {"post": 14418, "project": "feat-flow-with-spacesheep", "timeline_id": "tl-1"})
+    known = M.Projects(state=s)                                   # markers posted before 0.4.1 count
+    assert known.renamed_from(routes, "Spacesheep (copy)", "pr-9", "tl-1") == ("feat-flow-with-spacesheep",
+                                                                              "its open timeline was seen in")
+    known.see("feat-flow-with-spacesheep", "pr-1", "tl-2")
+    assert M.Projects().renamed_from(routes, "spacesheep v1", "pr-1", "tl-7") == ("feat-flow-with-spacesheep",
+                                                                                  "it has the same project ID as")
+    assert known.renamed_from(routes, "next-video", "pr-2", "tl-8") is None
+    assert known.renamed_from(routes, "feat-flow-with-spacesheep", "pr-1", "tl-1") is None   # it's routed itself
+
+
+def test_the_post_says_why_it_came_to_this_thread():
+    snap, _ = take(ReadOnly(fake.Resolve(fake.sample_timeline())))
+    call = M.Call(25, mk("@pm check"), None)
+    text = M.compose(call, snap, "editor", "mac-m4", fallback=True)
+    assert "has no route, so it came to this thread" in text and "routes.toml` on mac-m4" in text
+    assert "resolve.set_fallback" in text
+    text = M.compose(call, snap, "editor", renamed=("old-name", "it has the same project ID as"))
+    assert "it has the same project ID as “old-name” (renamed?)" in text and "no route" not in text
+    assert "came to" not in M.compose(call, snap, "editor")

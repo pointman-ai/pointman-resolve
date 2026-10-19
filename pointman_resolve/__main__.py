@@ -84,7 +84,8 @@ state = State()
 seen: dict[str, tuple[str, float]] = {}        # project/timeline -> (its digest, when first seen)
 node: dict = {"publishes": None}               # whether the node publishes for us (publishes())
 last_status: dict = {}                         # poll_status's latest, for health.check (off the lane)
-marks: dict = {"state": None, "read_posts": None, "polled": 0.0, "unrouted": set()}   # PFE-30's; read_posts: unknown yet
+marks: dict = {"state": None, "projects": None, "fallback": None, "read_posts": None, "polled": 0.0,
+              "unrouted": set()}   # PFE-30's; read_posts: unknown yet
 MARK_EVERY = float(os.environ.get("POINTMAN_RESOLVE_MARK_EVERY") or 10)     # tests make these short
 MARK_POLL = float(os.environ.get("POINTMAN_RESOLVE_MARK_POLL") or 30)
 
@@ -371,11 +372,24 @@ def marker_state() -> markers.State:
     return marks["state"]
 
 
-def post_marker(call: markers.Call, snap: dict, routing: dict, work: Path) -> int | None:
+def marker_projects() -> markers.Projects:
+    if marks["projects"] is None:
+        marks["projects"] = markers.Projects(state=marker_state())
+    return marks["projects"]
+
+
+def marker_fallback() -> markers.Fallback:
+    if marks["fallback"] is None:
+        marks["fallback"] = markers.Fallback(state=marker_state(), routes=markers.load_routes())
+    return marks["fallback"]
+
+
+def post_marker(call: markers.Call, snap: dict, routing: dict, work: Path,
+                renamed: tuple[str, str] | None = None) -> int | None:
     """The marker as a post: the text, with a still of its frame drawn from the source files (or the
     text as a file, if the still can't be drawn: core only posts with a file). The post's id."""
     text = markers.compose(call, snap, routing["mention"], ext.node.get("machine"), ticks=ticks_count(),
-                           unknown=routing.get("unknown"))
+                           unknown=routing.get("unknown"), fallback=not routing["routed"], renamed=renamed)
     work.mkdir(parents=True, exist_ok=True)
     shot = work / f"marker-{call.frame}.png"
     drawn = timeline_render.still(snap, call.frame, shot)
@@ -387,8 +401,7 @@ def post_marker(call: markers.Call, snap: dict, routing: dict, work: Path) -> in
         shot.write_text(text, encoding="utf-8")
         build = media.Build("document", [media.OutFile("document", shot, shot.name, "text/markdown")])
     project, timeline = snap["project"]["name"], snap["timeline"]["name"]
-    post = ({"thread_id": routing["thread"], "text": text} if routing["thread"] else
-            {"channel_id": routing["channel"], "title": f"Resolve marker in {project}", "text": text})
+    post = {"thread_id": routing["thread"], "text": text}
     answer = publish(build, project=project_for(project), asset_path=f"resolve/{project}/{timeline}/markers/{call.key}",
                      title=f"Marker at {markers.clock(call.frame, snap['timeline'].get('fps') or 25)}", caption=text,
                      post=post)
@@ -439,6 +452,9 @@ def watch_markers() -> None:
     if not project or not tl:
         return
     state, tid = marker_state(), tl.GetUniqueId()
+    name, pid = project.GetName(), project.GetUniqueId()
+    known = marker_projects()
+    known.see(name, pid, tid)
     writer = markers.MarkerWriter(raw.GetProjectManager().GetCurrentProject().GetCurrentTimeline())
     todo = []
     for call in markers.calls(tl.GetMarkers()):
@@ -452,16 +468,20 @@ def watch_markers() -> None:
     if todo:
         snap, _ = timeline_snapshot.take(resolve)        # one snapshot for this round, so stills match
         routes = markers.load_routes()
+        routed = ((routes.get("projects") or {}).get(name) or {}).get("thread")
+        renamed = None if routed else known.renamed_from(routes, name, pid, tid)
+        fallback = marker_fallback()
         work = Path(ext.node.get("work_dir") or tempfile.gettempdir()) / "markers"
         for call in todo[:3]:                             # a burst of new markers goes out over a few rounds
-            routing = markers.route(routes, project.GetName(), call.handle)
-            if not routing["thread"] and not routing["channel"]:
-                if project.GetName() not in marks["unrouted"]:
-                    marks["unrouted"].add(project.GetName())
-                    ext.log(f"markers in {project.GetName()!r} call agents, but routes.toml has nowhere for them")
+            routing = markers.route(routes, renamed[0] if renamed else name, call.handle, fallback.get())
+            if not routing["thread"]:
+                if name not in marks["unrouted"]:
+                    marks["unrouted"].add(name)
+                    ext.log(f"markers in {name!r} call agents, but it has no route and there's no fallback yet "
+                            "(a marker from a routed project, or resolve.set_fallback, sets one)")
                 continue
             try:
-                post = post_marker(call, snap, routing, work)
+                post = post_marker(call, snap, routing, work, renamed)
             except Exception as e:  # noqa: BLE001 - one marker failing mustn't stop the rest
                 ext.log(f"marker at {call.frame}: couldn't post: {e}")
                 continue
@@ -469,9 +489,11 @@ def watch_markers() -> None:
                 ext.log(f"marker at {call.frame}: core stored the still but made no post (thread {routing['thread']})")
                 state.put(tid, call.key, {"status": "unposted", "frame": call.frame, "at": time.time()})
                 continue
+            if routing["routed"]:                         # where the next unrouted project's markers go
+                fallback.set(routing["thread"], routing["agent"], by="marker", project=renamed[0] if renamed else name)
             tag = f"pm:{post}"
             state.put(tid, call.key, {"status": "posted", "post": post, "tag": tag, "mention": routing["mention"],
-                                      "frame": call.frame, "project": project.GetName(), "timeline": tl.GetName(),
+                                      "frame": call.frame, "project": name, "timeline": tl.GetName(),
                                       "timeline_id": tid, "at": time.time(),
                                       "marked": writer.mark(call.frame, call.marker, markers.POSTED, tag)})
     if time.monotonic() - marks["polled"] > MARK_POLL:
@@ -513,6 +535,30 @@ def marker_done(job):
     result = finish(markers.MarkerWriter(tl), state, key or f"{tl.GetUniqueId()}/post-{post}", entry,
                     job.params.get("by") or "agent")
     return {"post": post, **result}
+
+
+@ext.command("resolve.set_fallback")
+def set_fallback(job):
+    """Where markers from a project with no route go: a thread, and who @pm means there. With neither
+    given, where it is now."""
+    fb = marker_fallback()
+    thread, agent = job.params.get("thread"), job.params.get("agent")
+    if thread is None and agent is None:
+        return {"fallback": fb.get()}
+    now = fb.get() or {}
+    if thread is None and not now.get("thread"):
+        raise ValueError("there's no fallback thread yet: give `thread` too")
+    try:
+        thread = int(thread if thread is not None else now["thread"])
+    except (TypeError, ValueError):
+        raise ValueError(f"`thread` is a board thread's id, not {thread!r}") from None
+    agent = str(agent or now.get("agent") or markers.load_routes().get("person") or "james").lstrip("@").lower()
+    hit = markers.TRIGGER.match("@" + agent)
+    if thread <= 0 or not hit or hit[1] != agent:
+        raise ValueError("`thread` is a board thread's id and `agent` a handle")
+    was = fb.set(thread, agent, by=str(job.params.get("by") or "agent"))
+    marks["unrouted"].clear()                          # say so again if it's ever missing
+    return {"fallback": fb.get(), "was": was}
 
 
 # ------------------------------------------------------------ by itself: markers and auto renders

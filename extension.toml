@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.4.0"
+version = "0.4.1"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
@@ -42,7 +42,7 @@ default = 0
 [settings.properties.marker_calls]
 type = "boolean"
 title = "Markers call agents"
-description = "A marker whose name or note starts with @pm, @pointman or @<agent> is posted on the board for that agent (routes in ~/.pointman-resolve/routes.toml), and turns cyan, then green once it's done."
+description = "A marker whose name or note starts with @pm, @pointman or @<agent> is posted on the board for that agent (routes in ~/.pointman-resolve/routes.toml; a project with no route goes where the last marker went), and turns cyan, then green once it's done."
 default = true
 
 [settings.properties.markers]
@@ -83,6 +83,11 @@ lane = "resolve"
 ready_when = "connected"
 
 [[commands]]
+kind = "resolve.set_fallback"
+title = "Set where unrouted markers go"
+params = { type = "object", properties = { thread = { type = "integer", description = "The board thread markers from a Resolve project with no route are posted in." }, agent = { type = "string", description = "Who @pm / @pointman means there (a handle); the current one if left out." }, by = { type = "string" } }, additionalProperties = false }
+
+[[commands]]
 kind = "resolve.snapshot"
 title = "Snapshot the timeline"
 params = { type = "object", properties = { otio = { type = "boolean", default = true, description = "Also save Resolve's OTIO export of the timeline beside it." } }, additionalProperties = false }
@@ -114,6 +119,12 @@ returns = "result"
 name = "resolve_marker_done"
 command = "resolve.marker_done"
 description = "When you've done what a Resolve marker asked (a post that starts 'Resolve marker at'), turn the marker green in Resolve: give that post's id. Only the marker's colour changes."
+returns = "result"
+
+[[tools]]
+name = "resolve_set_fallback"
+command = "resolve.set_fallback"
+description = "Where markers from a Resolve project with no route in routes.toml are posted: a board thread, and the agent @pm means there. By default it's where the last marker from a routed project went. Give thread (and agent) to move it; give neither to see it. Reads and writes a file only."
 returns = "result"
 
 [[tools]]

@@ -29,13 +29,17 @@ def scriptapp(name):
 
 
 class Node:
-    def __init__(self, tmp: Path, read_posts: bool):
+    def __init__(self, tmp: Path, read_posts: bool, project: str | None = None, home: dict | None = None):
         api = tmp / "api"
         (api / "Modules").mkdir(parents=True)
-        (api / "Modules" / "DaVinciResolveScript.py").write_text(STANDIN, encoding="utf-8")
+        rename = f"fake.Project.GetName = lambda self: {project!r}\n" if project else ""
+        (api / "Modules" / "DaVinciResolveScript.py").write_text(STANDIN + rename, encoding="utf-8")
         (tmp / "Resolve.app").mkdir()
         (tmp / "fusionscript.so").write_text("")
         self.home = tmp / "home"
+        self.home.mkdir()
+        for name, data in (home or {}).items():                  # what the extension remembers already
+            (self.home / name).write_text(json.dumps(data), encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "LANG", "LC_CTYPE")}
         env.update({"POINTMAN_RESOLVE_HOME": str(self.home), "MB_RESOLVE_FAKE": "1", "RESOLVE_SCRIPT_API": str(api),
                     "RESOLVE_SCRIPT_LIB": str(tmp / "fusionscript.so"), "RESOLVE_APP": str(tmp / "Resolve.app"),
@@ -53,7 +57,8 @@ class Node:
         method, rid, p = m["method"], m["id"], m.get("params") or {}
         if method == "files.publish":
             self.published.append(p["body"])
-            result = {"asset_id": 1, "version_id": 1, "number": 1, "deduped": False, "message_id": 777}
+            result = {"asset_id": 1, "version_id": 1, "number": 1, "deduped": False,
+                      "message_id": 776 + len(self.published)}
         elif method == "core.call" and str(p.get("path")).startswith("/v1/node/messages/"):
             if not self.read_posts:                    # today's node: not on the extension allowlist
                 return {"jsonrpc": "2.0", "id": rid, "error": {"message": f"resolve may not call GET {p['path']} on core"}}
@@ -113,8 +118,8 @@ class Node:
             self.p.kill()
 
 
-def start(tmp_path, read_posts):
-    n = Node(tmp_path, read_posts)
+def start(tmp_path, read_posts, **kw):
+    n = Node(tmp_path, read_posts, **kw)
     n.work = tmp_path / "work"
     n.send("initialize", {"protocol": 1, "settings": {"markers": False}, "work_dir": str(n.work),
                           "state_dir": str(tmp_path / "state"), "roots": []})
@@ -157,6 +162,8 @@ def test_a_marker_that_calls_an_agent_is_posted_once_and_turns_cyan(node_refusin
     assert n.marker(400)["color"] == "Blue"                      # not a call: untouched
     time.sleep(1.5)                                               # a few more rounds
     assert len(n.published) == 1                                 # posted once
+    fb = json.loads((n.home / "fallback.json").read_text(encoding="utf-8"))
+    assert (fb["thread"], fb["agent"], fb["by"]) == (10399, "editor", "marker")   # where unrouted ones go next
 
 
 def test_marker_done_turns_it_green_where_posts_cant_be_read(node_refusing):
@@ -177,3 +184,39 @@ def test_a_tick_from_the_agent_turns_it_green_where_posts_can_be_read(node_readi
     assert until(lambda: n.marker(300)["color"] == "Cyan")
     n.ticked = True                                               # @editor reacts ✅
     assert until(lambda: n.marker(300)["color"] == "Green"), "the ✅ didn't turn it green"
+
+
+def test_an_unrouted_project_waits_for_a_fallback_then_posts_there(tmp_path):
+    n = start(tmp_path, read_posts=False, project="scratch")
+    try:
+        time.sleep(2)                                             # a few rounds: no route, no fallback
+        assert not n.published and n.marker(300)["custom"] == "" and n.marker(300)["color"] == "Red"
+        state, r = n.command("resolve.set_fallback", {}, "fb-0")
+        assert state == "done" and r["result"]["fallback"] is None, r
+        state, r = n.command("resolve.set_fallback", {"thread": 13661, "agent": "@editor", "by": "editor"}, "fb-1")
+        assert state == "done" and r["result"]["fallback"]["thread"] == 13661 and r["result"]["was"] is None, r
+        assert until(lambda: n.published), "the fallback didn't let it post"
+        post = n.published[0]["post"]
+        assert post["thread_id"] == 13661 and post["text"].startswith("@editor Resolve marker at")
+        assert "Project “scratch” has no route, so it came to this thread" in post["text"]
+        assert until(lambda: n.marker(300)["color"] == "Cyan")
+        for i, bad in enumerate(({"thread": "x"}, {"thread": 0}, {"agent": "edi tor"})):
+            state, r = n.command("resolve.set_fallback", bad, f"fb-bad-{i}")
+            assert state == "failed", (bad, r)
+        assert json.loads((n.home / "fallback.json").read_text(encoding="utf-8"))["agent"] == "editor"
+    finally:
+        n.close()
+
+
+def test_a_renamed_project_keeps_its_route(tmp_path):
+    n = start(tmp_path, read_posts=False, project="Spacesheep v1 (renamed)",
+              home={"projects.json": {"feat-flow-with-spacesheep": {"id": "pr-1", "timelines": []}},
+                    "fallback.json": {"thread": 13661, "agent": "rtx-render"}})
+    try:
+        assert until(lambda: n.published)
+        post = n.published[0]["post"]
+        assert post["thread_id"] == 10399 and post["text"].startswith("@editor Resolve marker at")
+        assert "it has the same project ID as “feat-flow-with-spacesheep” (renamed?)" in post["text"]
+        assert until(lambda: json.loads((n.home / "fallback.json").read_text(encoding="utf-8"))["thread"] == 10399)
+    finally:
+        n.close()

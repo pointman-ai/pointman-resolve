@@ -33,7 +33,9 @@ and `CHANGELOG.md` describe 21.x. README.txt is from 2024 and misses things like
 - Crop, Pan and Tilt: one unit is 2 px on a 1920×1080 timeline for a 16:9 source (Pan 100 moved a clip 200 px,
   Tilt 100 moved it 200 px up, CropRight 260 cut 520 px). The units are shares of the clip's fitted image, not
   the frame: 960 across its width, 540 down its height. A 1728×1116 screen recording fits to 1672×1080, so its
-  Pan unit is 1.74 px while its Tilt unit stays 2 px. Using 2 px put a desktop 2–3 px off. A crop of 520 per side in "pixels" removes the whole picture, and
+  Pan unit is 1.74 px while its Tilt unit stays 2 px. Using 2 px put a desktop 2–3 px off. Measured for Pan
+  on a pillarboxed source only: that crops on a non-16:9 clip and Tilt on a letterboxed (wider than 16:9) one
+  follow the same rule is inferred. Check the first such clip with `resolve_frame_check`. A crop of 520 per side in "pixels" removes the whole picture, and
   the clip vanishes without an error. OTIO export stores them as units ÷ 960 (Pan, CropLeft/Right) and
   ÷ 540 (Tilt, CropTop/Bottom).
 - Zoom scales about the frame centre after the crop. Pan is right, Tilt is up.

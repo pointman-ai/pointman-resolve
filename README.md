@@ -137,6 +137,10 @@ data, so they can follow it without watching your screen.
   own size, and a snapshot carries it as `timeline.px_per_unit` (`null` if not measured; 2 is assumed). OTIO stores them as a fraction of the whole frame: Pan and
   CropLeft/Right ÷ 960 units (= ÷ width), Tilt and CropTop/Bottom ÷ 540 (= ÷ height).
 - From a shell: `python -m pointman_resolve.timeline.cli snapshot | diff A B | check S`.
+- **Grades** (`timeline/grades.py`): Resolve has `SetCDL` but no `GetCDL`, so a tool that sets a CDL also writes it
+  to `~/.pointman-resolve/grades.json` under the clip's unique id: `{"items": {"<id>": {"cdl": {"Slope": "r g b",
+  "Offset": …, "Power": …, "Saturation": …}, "by": "<tool>"}}}`. Snapshots attach it as `item.cdl`, and the shadow
+  render, marker stills and frame checks draw it. A neutral CDL removes the entry.
 - **Resolve's own frame** (`timeline/framecheck.py`): the shadow render is only as right as its model of
   Resolve. On Spacesheep v1 every cutout was invisible in Resolve for a day while our placer and renderer
   agreed with each other, both taking units for pixels. `resolve.frame_check` closes that gap after any

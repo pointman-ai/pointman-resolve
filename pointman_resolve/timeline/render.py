@@ -19,8 +19,9 @@ So a cropped image whose fitted top-left is (x0, y0) lands at
 Opacity and fades (GetFades) apply to alpha. Alpha media (ProRes 4444 cutouts, graphics) keep theirs.
 Audio items are mixed at their AudioVolume (dB) with their fades.
 
+Grades are drawn where our tools recorded the CDL they set (grades.py: Resolve has no GetCDL).
 Not drawn yet (listed in the result's `skipped`): generators and titles (Resolve doesn't expose
-their parameters), transitions, speed changes, grades, flips and rotation.
+their parameters), transitions, speed changes, other grades, flips and rotation.
 
 Clips fully hidden under an opaque full-frame clip above them for their whole span are not decoded.
 """
@@ -31,6 +32,8 @@ import os
 import subprocess
 from functools import lru_cache
 from pathlib import Path
+
+from . import grades
 
 UNIT = 2.0  # px per Crop/Pan/Tilt unit on a 1920x1080 timeline
 ALPHA_FMTS = ("yuva", "rgba", "bgra", "argb", "abgr", "gbrap", "ya")
@@ -97,7 +100,7 @@ def plan(snap: dict, start: int, end: int) -> dict:
         seg = {"id": it["id"], "track": it["track"], "file": it.get("file"), "name": it.get("name"),
                "on": (s0 - start) / fps, "dur": (s1 - s0) / fps,
                "src": ((it.get("in") or 0) + s0 - a) / fps, "fades": it.get("fades") or {},
-               "head": s0 == a, "tail": s1 == a + n, "frames": n, "props": it.get("props") or {}}
+               "head": s0 == a, "tail": s1 == a + n, "frames": n, "props": it.get("props") or {}, "cdl": it.get("cdl")}
         why = None
         if it.get("type") in ("transition", "generator", "title") or not it.get("file"):
             why = it.get("type") or "no file"
@@ -163,6 +166,7 @@ def command(p: dict, out: Path, *, width: int = 960, still: bool = False) -> lis
         cx, cy = min(round(cl * z), sw - 2), min(round(ct * z), sh - 2)  # rounding must stay inside the scaled frame
         f = [f"[{k}:v]fps={fps}", f"scale={sw}:{sh}", "format=yuva444p",
              f"crop={max(2, min(round(cw * z), sw - cx))}:{max(2, min(round(ch * z), sh - cy))}:{cx}:{cy}"]
+        f += grades.filters(v.get("cdl"))                # the grade our tools set (PFE-42)
         if g["opacity"] < 100:
             f.append(f"colorchannelmixer=aa={g['opacity'] / 100:.3f}")
         f += fade_filters(v, fps, audio=False)

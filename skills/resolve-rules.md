@@ -39,8 +39,9 @@ and `CHANGELOG.md` describe 21.x. README.txt is from 2024 and misses things like
   the clip vanishes without an error. OTIO export stores them as units ÷ 960 (Pan, CropLeft/Right) and
   ÷ 540 (Tilt, CropTop/Bottom).
 - Zoom scales about the frame centre after the crop. Pan is right, Tilt is up.
-- `TimelineItem.SetCDL({"NodeIndex": "1", "Slope": "r g b", ...})` sets a grade, but there's no `GetCDL`.
-  Record what you set if you want to undo it or draw it.
+- `TimelineItem.SetCDL({"NodeIndex": "1", "Slope": "r g b", ...})` sets a grade, but there's no `GetCDL`, and
+  `ExportLUT` refuses on the Edit page. Record every CDL you set in `~/.pointman-resolve/grades.json` under the
+  clip's unique id (README, Grades): the shadow render and frame checks draw it, and undo can put it back.
 - `Get/SetProperty` still works but is deprecated. Read every key you'll change before you change it.
 
 ## Checking your work

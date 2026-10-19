@@ -431,8 +431,8 @@ def shadow(job):
     if not r["ok"]:
         raise RuntimeError(f"the shadow render failed: {r['error']}")
     result = {k: r[k] for k in ("from", "to", "seconds", "video_clips", "audio_clips", "hidden")}
-    # grades are never drawn yet (PFE-42); the rest is what this range has that the renderer skipped
-    result["not_drawn"] = ["grades"] + sorted({s["why"] for s in r["skipped"]})
+    # grades our tools recorded are drawn (PFE-42); others, and what the renderer skipped, aren't
+    result["not_drawn"] = ["grades not set by our tools"] + sorted({s["why"] for s in r["skipped"]})
     project, timeline = snap["project"]["name"], snap["timeline"]["name"]
     if not publishes():
         job.output(out, kind="video", meta=result)

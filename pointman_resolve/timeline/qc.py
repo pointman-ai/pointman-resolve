@@ -219,6 +219,10 @@ SAME = ("ZoomX", "ZoomY", "Pan", "Tilt", "CropLeft", "CropRight", "CropTop", "Cr
         "RotationAngle", "FlipX", "FlipY", "AudioVolume", "AudioPan")
 
 
+def graded(it: dict) -> bool:
+    return bool((it.get("grade") or {}).get("graded") or it.get("cdl"))
+
+
 def continues(x: dict, y: dict, fps: float) -> bool:
     """y carries on from x frame for frame: same file, right after it, the source going on (60 fps in its own frames)."""
     if x.get("file") != y.get("file") or x["record"] + (x.get("frames") or 0) != y["record"]:
@@ -241,7 +245,7 @@ def clutter(snap: dict) -> dict:
             g = R.geometry(it, W, H, unit)
             if g and R.covers_frame(g, W, H):
                 covers.setdefault(it["track"], []).append((it["record"], it["record"] + it["frames"]))
-    out, totals = {}, {"clips": 0, "never_seen": 0, "through_edits": 0}
+    out, totals = {}, {"clips": 0, "never_seen": 0, "through_edits": 0, "through_edits_if_grades_match": 0}
     for t in snap["tracks"]:
         kind, k = t["kind"], t["index"]
         lane = f"{kind[0].upper()}{k}"
@@ -257,17 +261,29 @@ def clutter(snap: dict) -> dict:
                         break
                     pos = max(pos, s1)
                 hidden += pos >= b
-        through = sum(1 for x, y in zip(mine, mine[1:]) if continues(x, y, fps)
-                      and all((x.get("props") or {}).get(p) == (y.get("props") or {}).get(p) for p in SAME)
-                      and (x.get("color"), x.get("enabled")) == (y.get("color"), y.get("enabled"))
-                      and x.get("grade") == y.get("grade"))      # where snapshots read grades (PFE-11's field)
+        through = maybe = 0
+        for x, y in zip(mine, mine[1:]):
+            if not (continues(x, y, fps) and (x.get("color"), x.get("enabled")) == (y.get("color"), y.get("enabled"))
+                    and all((x.get("props") or {}).get(p) == (y.get("props") or {}).get(p) for p in SAME)):
+                continue
+            # a grade's values can't be read back (no GetCDL; ExportLUT refuses on the Edit page): two graded
+            # pieces are one clip only if the CDLs our tools recorded say so (grades.json), else "if they match"
+            gx, gy = graded(x), graded(y)
+            if not gx and not gy:
+                through += 1
+            elif x.get("cdl") and x.get("cdl") == y.get("cdl") and (x.get("grade") or {}).get("tools") == (y.get("grade") or {}).get("tools"):
+                through += 1
+            else:
+                maybe += 1
         name = t.get("name") or ""
         out[lane] = {"name": name, "clips": len(mine), "never_seen": hidden, "through_edits": through,
+                     "through_edits_if_grades_match": maybe,
                      "empty": not mine, "unnamed": bool(re.fullmatch(r"(Video|Audio|Subtitle) \d+", name)) or not name}
         totals["clips"] += len(mine)
         totals["never_seen"] += hidden
         totals["through_edits"] += through
-    # without a grade field, two pieces split only to grade one differently look like a through-edit
+        totals["through_edits_if_grades_match"] += maybe
+    # without a grade field (before PFE-11's snapshots), a graded piece can't be told from an ungraded one
     totals["grades_compared"] = any("grade" in i for i in items)
     totals["empty_tracks"] = [l for l, r in out.items() if r["empty"]]
     totals["unnamed_tracks"] = [l for l, r in out.items() if r["unnamed"] and not r["empty"]]
@@ -314,13 +330,17 @@ def markdown(r: dict, title: str) -> str:
     c = (r.get("clutter") or {}).get("totals")
     if c:
         lines.append(f"\nClutter: {c['clips']} clips, {c['never_seen']} never seen, {c['through_edits']} through-edits"
-                     + ("" if c.get("grades_compared") else " (grades not compared: some may be pieces graded differently)")
+                     + (f", {c['through_edits_if_grades_match']} more if their grades match"
+                        if c.get("through_edits_if_grades_match") else "")
+                     + ("" if c.get("grades_compared") else " (grades not read: some may be pieces graded differently)")
                      + (f", empty tracks {', '.join(c['empty_tracks'])}" if c["empty_tracks"] else "")
                      + (f", unnamed {', '.join(c['unnamed_tracks'])}" if c["unnamed_tracks"] else "") + ".")
-        rows = [(l, t) for l, t in r["clutter"]["tracks"].items() if t["never_seen"] or t["through_edits"]]
+        rows = [(l, t) for l, t in r["clutter"]["tracks"].items()
+                if t["never_seen"] or t["through_edits"] or t["through_edits_if_grades_match"]]
         if rows:
-            lines += ["", "| Track | Clips | Never seen | Through-edits |", "|---|---|---|---|"]
-            lines += [f"| {l} {t['name']} | {t['clips']} | {t['never_seen']} | {t['through_edits']} |" for l, t in rows]
+            lines += ["", "| Track | Clips | Never seen | Through-edits | If grades match |", "|---|---|---|---|---|"]
+            lines += [f"| {l} {t['name']} | {t['clips']} | {t['never_seen']} | {t['through_edits']} | "
+                      f"{t['through_edits_if_grades_match']} |" for l, t in rows]
     if r["issues"]:
         lines += ["", "| At | Check | What |", "|---|---|---|"]
         fps = r.get("fps") or 25.0

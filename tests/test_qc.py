@@ -110,6 +110,11 @@ def test_clutter_counts_never_seen_and_through_edits(monkeypatch):
     v1 = c["tracks"]["V1"]
     assert (v1["clips"], v1["through_edits"], v1["never_seen"]) == (3, 1, 1)
     assert c["totals"]["empty_tracks"] == ["V3", "A1"] and not c["totals"]["grades_compared"]
-    s["items"][1]["grade"] = {"graded": True}                  # graded differently: not a through-edit
+    s["items"][1]["grade"] = {"graded": True, "tools": ["Primary Balance"]}   # one graded: only "if they match"
     s["items"][0]["grade"] = {"graded": False}
-    assert qc.clutter(s)["tracks"]["V1"]["through_edits"] == 0
+    v1 = qc.clutter(s)["tracks"]["V1"]
+    assert (v1["through_edits"], v1["through_edits_if_grades_match"]) == (0, 1)
+    cdl = {"Slope": "0.9 1 1.1"}                                    # both graded the same, as our tools recorded
+    s["items"][0].update(grade={"graded": True, "tools": ["Primary Balance"]}, cdl=cdl)
+    s["items"][1]["cdl"] = dict(cdl)
+    assert qc.clutter(s)["tracks"]["V1"]["through_edits"] == 1

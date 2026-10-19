@@ -89,6 +89,8 @@ marks: dict = {"state": None, "projects": None, "fallback": None, "read_posts": 
               "unrouted": set()}   # PFE-30's; read_posts: unknown yet
 MARK_EVERY = float(os.environ.get("POINTMAN_RESOLVE_MARK_EVERY") or 10)     # tests make these short
 MARK_POLL = float(os.environ.get("POINTMAN_RESOLVE_MARK_POLL") or 30)
+# a marker back at its own colour usually means James is undoing: recolour only once he's been idle this long
+HEAL_IDLE = float(os.environ.get("POINTMAN_RESOLVE_HEAL_IDLE") or 90)
 
 
 def poll_status() -> None:
@@ -616,6 +618,18 @@ def watch_markers() -> None:
     known = marker_projects()
     known.see(name, pid, tid)
     writer = markers.MarkerWriter(raw.GetProjectManager().GetCurrentProject().GetCurrentTimeline())
+    claims = {e.get("claim"): (k, e) for k, e in state.data.items() if e.get("claim")}
+    for frame, m in markers.claimed(tl.GetMarkers()):
+        key, entry = claims.get(m.get("customData"), (None, None))
+        if entry and entry.get("status") == "posted":   # posted, the post's tag not on yet: put it on
+            entry["marked"] = writer.mark(frame, m, markers.POSTED, entry["tag"])
+            state.data[key] = entry
+            state.save()
+        elif not entry or entry.get("status") == "claimed":
+            writer.release(m.get("customData"))          # never posted (a crash mid-post): next round posts it
+            if key:
+                state.data.pop(key, None)
+                state.save()
     todo = []
     for call in markers.calls(tl.GetMarkers()):
         done = state.get(tid, call.key)
@@ -640,30 +654,76 @@ def watch_markers() -> None:
                     ext.log(f"markers in {name!r} call agents, but it has no route and there's no fallback yet "
                             "(a marker from a routed project, or resolve.set_fallback, sets one)")
                 continue
+            # claim it first: a post can take a while (a Wi-Fi drop), and if James's edits move the marker
+            # meanwhile, an untagged marker at a new frame would look new and be posted again (marker 59)
+            claim = f"{markers.CLAIM}{call.key}"
+            got = writer.claim(call.frame, call.marker, claim)
+            if got != "ok":
+                if call.key not in marks.setdefault("unclaimed", set()):
+                    marks["unclaimed"].add(call.key)
+                    ext.log(f"marker at {call.frame}: not claimed ({got}); it's read again each round")
+                continue
+            state.put(tid, call.key, {"status": "claimed", "claim": claim, "frame": call.frame, "at": time.time(),
+                                      "color": call.marker.get("color")})
             try:
                 post = post_marker(call, snap, routing, work, renamed)
             except Exception as e:  # noqa: BLE001 - one marker failing mustn't stop the rest
                 ext.log(f"marker at {call.frame}: couldn't post: {e}")
+                writer.release(claim)                    # untagged again, so the next round tries it again
+                state.data.pop(f"{tid}/{call.key}", None)
+                state.save()
                 continue
             if not post:
                 ext.log(f"marker at {call.frame}: core stored the still but made no post (thread {routing['thread']})")
+                writer.release(claim)
                 state.put(tid, call.key, {"status": "unposted", "frame": call.frame, "at": time.time()})
                 continue
             if routing["routed"]:                         # where the next unrouted project's markers go
                 fallback.set(routing["thread"], routing["agent"], by="marker", project=renamed[0] if renamed else name)
             tag = f"pm:{post}"
-            state.put(tid, call.key, {"status": "posted", "post": post, "tag": tag, "mention": routing["mention"],
-                                      "frame": call.frame, "project": name, "timeline": tl.GetName(),
-                                      "timeline_id": tid, "at": time.time(),
-                                      "marked": writer.mark(call.frame, call.marker, markers.POSTED, tag)})
+            entry = {"status": "posted", "post": post, "tag": tag, "claim": claim, "mention": routing["mention"],
+                     "frame": call.frame, "project": name, "timeline": tl.GetName(), "timeline_id": tid,
+                     "at": time.time(), "color": call.marker.get("color"), "marked": "gone"}
+            state.put(tid, call.key, entry)              # posted: whatever happens next, it's never posted again
+            found = writer.find(claim)                   # wherever James's edits have moved it by now
+            if found and (found[1].get("name"), found[1].get("note")) != (call.marker.get("name"), call.marker.get("note")):
+                writer.release(claim)                    # edited while its post was out: post the new text too
+                entry["marked"] = "edited"
+                state.put(tid, call.key, entry)
+                found = None
+            if found:
+                entry["marked"] = writer.mark(found[0], found[1], markers.POSTED, tag)
+                entry["frame"] = found[0]
+                state.put(tid, call.key, entry)
     if time.monotonic() - marks["polled"] > MARK_POLL:
         marks["polled"] = time.monotonic()
+        end = tl.GetEndFrame()
+        if hid_idle_seconds() >= HEAL_IDLE and marks.get("heal_end") == end:
+            heal_colours(writer, state, tid)            # never in the middle of an undo run (resolvedoc, PR 11)
+        marks["heal_end"] = end
         for key, entry in state.open():
             if entry.get("status") != "posted" or entry.get("timeline_id") != tid:
                 continue
             by = markers.done_by(reactions_of(entry["post"]) or [], entry.get("mention") or "")
             if by:
                 finish(writer, state, key, entry, by)
+
+
+def heal_colours(writer: markers.MarkerWriter, state: markers.State, tid: str) -> None:
+    """Our markers show where they stand (cyan posted, green done). One that's back at the colour it had
+    before we touched it (an undo in Resolve takes back our delete + add) gets ours again. One James has
+    given some other colour is his choice, and is left alone."""
+    have = {m.get("customData"): (int(float(f)), m) for f, m in (writer.GetMarkers() or {}).items()
+            if str(m.get("customData") or "").startswith("pm:")}
+    for key, entry in list(state.data.items()):
+        if entry.get("timeline_id") != tid or entry.get("status") not in ("posted", "done") or not entry.get("tag"):
+            continue
+        found = have.get(entry["tag"])
+        want = markers.DONE if entry["status"] == "done" else markers.POSTED
+        if not found or found[1].get("color") == want or found[1].get("color") != (entry.get("color") or "Blue"):
+            continue
+        result = writer.mark(found[0], found[1], want, entry["tag"])
+        ext.log(f"marker {entry['tag']} at {found[0]} was back to {found[1].get('color')}: recoloured {want} ({result})")
 
 
 def finish(writer: markers.MarkerWriter, state: markers.State, key: str, entry: dict, by: str) -> dict:

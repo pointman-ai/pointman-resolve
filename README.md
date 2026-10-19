@@ -27,8 +27,8 @@ made while Resolve is closed waits until it's open again.
 
 ## Commands
 
-Agents get `resolve_render`, `resolve_still`, `resolve_snapshot`, `resolve_diff`, `resolve_check`, `resolve_shadow`, `resolve_frame_check`
-and `resolve_calibrate` as tools, or call any command on the Mac with
+Agents get `resolve_render`, `resolve_still`, `resolve_snapshot`, `resolve_diff`, `resolve_check`, `resolve_shadow`, `resolve_qc`,
+`resolve_frame_check` and `resolve_calibrate` as tools, or call any command on the Mac with
 `run_on_machine`. Every Resolve call runs on one lane, one at a time, since Resolve's API isn't meant to be
 driven from several threads at once.
 
@@ -41,6 +41,7 @@ driven from several threads at once.
 | `resolve.diff` | `timeline?`, `a?`, `b?`, `full?` | What changed between two snapshots of a timeline, by default its latest and the one before. Reads files only |
 | `resolve.check` | `timeline?`, `snapshot?` | A snapshot against the OTIO export taken with it, item by item. Reads files only |
 | `resolve.shadow` | `from`, `to` (≤ 3 min), `width?` (960), `thread_id?` | Any range of the open timeline drawn from the source files with ffmpeg: every track, the audio mixed, posted as a video. Resolve isn't asked to render and the playhead doesn't move, so it's safe while someone edits. Lists what it can't draw yet (grades, transitions, speed, titles). ffmpeg runs niced, so playback in Resolve doesn't stutter |
+| `resolve.qc` | `from?`, `to?`, `sound?` (true), `sources?` (true), `thread_id?` | A QC report, posted as a document: black frames, flash frames (clips or gaps under 3 frames), screen recordings that are one frozen frame, and for a range up to 15 min the mix's loudness (target −14 LUFS), true peak and dead air: an estimate from clip levels, without track faders, the bus or Fairlight effects. Resolve and the playhead aren't touched; it holds the lane about 25 s plus 5 s a minute of mix |
 | `resolve.frame_check` | `frame`, `min_psnr?` (30), `wait?` (3 s) | Resolve's own picture of one frame against the shadow render of it: PSNR, the box where they differ, and the clips there with their Zoom/Pan/Tilt/crops (closest fit first). Posts Resolve \| shadow \| difference. Moves the playhead only after the timeline has been still for `wait` seconds, and puts it back |
 | `resolve.calibrate` | `frame?`, `dry_run?`, `wait?` | Pixels per Crop/Pan/Tilt unit at the open timeline's size, measured on Resolve's own frame: the candidate (0.5–4) whose shadow render matches it best. Picks a frame with a moved or cropped clip itself. Sets nothing on any clip; stored per resolution in `calibration.json`, and later snapshots carry it |
 

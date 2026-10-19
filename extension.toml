@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.6.6"
+version = "0.6.7"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
@@ -122,6 +122,15 @@ cancellable = true
 outputs = ["video"]
 
 [[commands]]
+kind = "resolve.qc"
+title = "QC the timeline"
+params = { type = "object", properties = { from = { type = ["string", "integer"], description = "Timeline frame or time; the start if left out." }, to = { type = ["string", "integer"], description = "The end if left out." }, sound = { type = "boolean", default = true, description = "Loudness, peak and dead air of the mix (ranges up to 15 min)." }, sources = { type = "boolean", default = true, description = "Check every screen recording for a frozen capture." }, thread_id = { type = "integer" } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+cancellable = true
+outputs = ["document"]
+
+[[commands]]
 kind = "resolve.frame_check"
 title = "Check a frame in Resolve against the shadow render"
 params = { type = "object", required = ["frame"], properties = { frame = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, min_psnr = { type = "number", default = 30 }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still before the playhead is moved." }, thread_id = { type = "integer", description = "Post the comparison image in this thread." } }, additionalProperties = false }
@@ -202,4 +211,10 @@ returns = "result"
 name = "resolve_shadow"
 command = "resolve.shadow"
 description = "Watch any range of the open Resolve timeline (up to 3 min a request; it takes about a third of real time and holds up marker posts meanwhile) without touching Resolve: every track composited from the source files and the audio mixed, posted as a video. The playhead and page don't move, so it's safe while someone edits. Grades, transitions, speed changes and titles aren't drawn yet (listed in not_drawn): for those, check with resolve_frame_check."
+returns = "result"
+
+[[tools]]
+name = "resolve_qc"
+command = "resolve.qc"
+description = "QC the open Resolve timeline without touching Resolve: black frames, flash frames (clips or gaps under 3 frames), screen recordings that are one frozen frame, and for a range up to 15 min the mix's loudness (target -14 LUFS), true peak and dead air (1.5 s+ under -50 dB). The sound figures are an estimate from clip levels (no track faders, bus or Fairlight effects). Posts a report. It holds up marker posts while it runs: about 25 s for the frozen check of a whole timeline, plus about 5 s a minute of mix. Run it after a batch of changes, and on new footage the day it lands."
 returns = "result"

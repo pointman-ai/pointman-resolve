@@ -24,6 +24,7 @@ For agents changing a DaVinci Resolve timeline. Skip it otherwise.
 - When a covering clip's look changes (zoomed out, cropped), re-check what now shows beneath it.
 - Media nobody sees under a covering clip is clutter: offer to remove it.
 - One named track per role: camera, screen, loft, desktop, cutout, graphics, music, sfx.
+- `resolve_qc` counts the clutter per track: check it before and after a batch of changes, and don't leave it higher.
 
 **Make it readable at a glance.**
 - Colour clips by kind, the same way everywhere: one colour per layout or block type, so the person can find them all and change them in one pass. Tell them the key.

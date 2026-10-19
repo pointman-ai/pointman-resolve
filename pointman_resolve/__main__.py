@@ -402,7 +402,7 @@ def frame_of_param(job):
     return lambda snap: timeline_render.parse_time(job.params["frame"], snap["timeline"]["fps"] or 25.0)
 
 
-SHADOW_MAX_S = 600   # a shadow render is ffmpeg on this Mac: ten minutes at most per request
+SHADOW_MAX_S = 180   # holds the resolve lane (markers, status) while it renders: 3 min a request, about 75 s
 
 
 @ext.command("resolve.shadow")

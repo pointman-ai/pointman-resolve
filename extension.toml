@@ -201,5 +201,5 @@ returns = "result"
 [[tools]]
 name = "resolve_shadow"
 command = "resolve.shadow"
-description = "Watch any range of the open Resolve timeline (up to 10 min) without touching Resolve: every track composited from the source files and the audio mixed, posted as a video. The playhead and page don't move, so it's safe while someone edits. Grades, transitions, speed changes and titles aren't drawn yet (listed in not_drawn): for those, check with resolve_frame_check."
+description = "Watch any range of the open Resolve timeline (up to 3 min a request; it takes about a third of real time and holds up marker posts meanwhile) without touching Resolve: every track composited from the source files and the audio mixed, posted as a video. The playhead and page don't move, so it's safe while someone edits. Grades, transitions, speed changes and titles aren't drawn yet (listed in not_drawn): for those, check with resolve_frame_check."
 returns = "result"

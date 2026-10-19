@@ -27,6 +27,7 @@ Clips fully hidden under an opaque full-frame clip above them for their whole sp
 
 import json
 import math
+import os
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -200,7 +201,8 @@ def render(snap: dict, start: int, end: int, out: Path, *, width: int = 960, sti
     p = plan(snap, start, end)
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = command(p, out, width=width, still=still)
-    run = subprocess.run(cmd, capture_output=True, text=True)
+    # niced: the person may be playing back in Resolve on the same Mac (resolvedoc, PR 10)
+    run = subprocess.run(cmd, capture_output=True, text=True, preexec_fn=lambda: os.nice(10))
     return {"ok": run.returncode == 0 and out.exists(), "out": str(out), "from": start, "to": end,
             "seconds": round(p["dur"], 3), "video_clips": len(p["video"]), "audio_clips": len(p["audio"]),
             "hidden": p["hidden"], "skipped": p["skipped"],

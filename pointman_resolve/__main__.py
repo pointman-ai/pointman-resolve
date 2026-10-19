@@ -89,6 +89,8 @@ marks: dict = {"state": None, "projects": None, "fallback": None, "read_posts": 
               "unrouted": set()}   # PFE-30's; read_posts: unknown yet
 MARK_EVERY = float(os.environ.get("POINTMAN_RESOLVE_MARK_EVERY") or 10)     # tests make these short
 MARK_POLL = float(os.environ.get("POINTMAN_RESOLVE_MARK_POLL") or 30)
+# a marker back at its own colour usually means James is undoing: recolour only once he's been idle this long
+HEAL_IDLE = float(os.environ.get("POINTMAN_RESOLVE_HEAL_IDLE") or 90)
 
 
 def poll_status() -> None:
@@ -657,7 +659,9 @@ def watch_markers() -> None:
             claim = f"{markers.CLAIM}{call.key}"
             got = writer.claim(call.frame, call.marker, claim)
             if got != "ok":
-                ext.log(f"marker at {call.frame}: not claimed ({got}); next round reads it again")
+                if call.key not in marks.setdefault("unclaimed", set()):
+                    marks["unclaimed"].add(call.key)
+                    ext.log(f"marker at {call.frame}: not claimed ({got}); it's read again each round")
                 continue
             state.put(tid, call.key, {"status": "claimed", "claim": claim, "frame": call.frame, "at": time.time(),
                                       "color": call.marker.get("color")})
@@ -682,13 +686,21 @@ def watch_markers() -> None:
                      "at": time.time(), "color": call.marker.get("color"), "marked": "gone"}
             state.put(tid, call.key, entry)              # posted: whatever happens next, it's never posted again
             found = writer.find(claim)                   # wherever James's edits have moved it by now
+            if found and (found[1].get("name"), found[1].get("note")) != (call.marker.get("name"), call.marker.get("note")):
+                writer.release(claim)                    # edited while its post was out: post the new text too
+                entry["marked"] = "edited"
+                state.put(tid, call.key, entry)
+                found = None
             if found:
                 entry["marked"] = writer.mark(found[0], found[1], markers.POSTED, tag)
                 entry["frame"] = found[0]
                 state.put(tid, call.key, entry)
     if time.monotonic() - marks["polled"] > MARK_POLL:
         marks["polled"] = time.monotonic()
-        heal_colours(writer, state, tid)
+        end = tl.GetEndFrame()
+        if hid_idle_seconds() >= HEAL_IDLE and marks.get("heal_end") == end:
+            heal_colours(writer, state, tid)            # never in the middle of an undo run (resolvedoc, PR 11)
+        marks["heal_end"] = end
         for key, entry in state.open():
             if entry.get("status") != "posted" or entry.get("timeline_id") != tid:
                 continue

@@ -45,6 +45,7 @@ class Node:
         env.update({"POINTMAN_RESOLVE_HOME": str(self.home), "MB_RESOLVE_FAKE": "1", "RESOLVE_SCRIPT_API": str(api),
                     "RESOLVE_SCRIPT_LIB": str(tmp / "fusionscript.so"), "RESOLVE_APP": str(tmp / "Resolve.app"),
                     "POINTMAN_RESOLVE_MARK_EVERY": "0.5", "POINTMAN_RESOLVE_MARK_POLL": "0",
+                    "POINTMAN_RESOLVE_HEAL_IDLE": "0",
                     "LC_ALL": "en_US.US-ASCII",
                     "PYTHONPATH": os.pathsep.join([str(sdk()), str(ROOT), str(ROOT / "tests")])})
         self.p = subprocess.Popen([sys.executable, "-m", "pointman_resolve"], cwd=ROOT, env=env, text=True,

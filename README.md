@@ -57,6 +57,29 @@ driven from several threads at once.
   has changed (clips, trims, tracks or markers) and neither it nor the Mac's keyboard and mouse have been
   touched for that long. An edit that's already been rendered isn't rendered again.
 
+## Markers that call an agent
+
+Write `@pm`, `@pointman` or `@<agent>` at the start of a timeline marker's name or note, and the marker
+is posted on the board for that agent. The post has the marker's timecode, what you wrote, the clips
+under it, and a still of that frame. The still is drawn from the source files by
+`timeline/render.py`, so your playhead and page don't move.
+
+- **Where:** `~/.pointman-resolve/routes.toml` maps each Resolve project to a board thread and to the
+  agent `@pm` means there. A project that isn't listed goes to the `[unmapped]` thread or channel,
+  mentioning you. If neither is set, its markers wait.
+- **The marker answers:** once posted it turns **cyan**, with custom data `pm:<post id>`. It turns
+  **green** when the agent calls `resolve.marker_done` (tool `resolve_marker_done`). Where the node lets
+  extensions read posts, a ✅ from that agent or from you does it too. The name and note are never
+  changed.
+- **No loops:** markers with custom data `dailies:…` (board notes mirrored as markers) or `pm:…` (already
+  posted) are never picked up. Each marker is posted once, remembered in `~/.pointman-resolve/markers.json`,
+  even if tagging it in Resolve fails. At most three go out per 10 s round.
+- **The only write:** `markers.MarkerWriter` can only tag, delete and re-add a marker, the same kind of
+  write `resolve.marker` makes. It tags first, so the marker is never posted twice. A colour change is
+  a delete and re-add, and if Resolve refuses the re-add, the marker is put back as it was. It leaves
+  alone a marker you've edited since it was posted.
+- Turn it off with the `marker_calls` setting.
+
 ## The timeline as data
 
 `resolve.snapshot`, `resolve.diff` and `resolve.check` (`pointman_resolve/timeline/`) give agents the edit as

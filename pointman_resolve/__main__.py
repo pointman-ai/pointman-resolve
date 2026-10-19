@@ -21,6 +21,7 @@ Every Resolve call happens on the "resolve" lane, one thread. Core is reached on
 """
 
 import json
+import os
 import shutil
 import tempfile
 import time
@@ -31,10 +32,11 @@ try:
 except ImportError:                 # a node from before the rename (thread 2255 [3561])
     from mb_extension import Cancelled, Extension, Retry  # type: ignore[no-redef]
 
-from . import media
+from . import markers, media
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
 from .timeline import check as timeline_check
 from .timeline import diff as timeline_diff
+from .timeline import render as timeline_render
 from .timeline import snapshot as timeline_snapshot
 from .timeline.readonly import ReadOnly
 
@@ -82,6 +84,9 @@ state = State()
 seen: dict[str, tuple[str, float]] = {}        # project/timeline -> (its digest, when first seen)
 node: dict = {"publishes": None}               # whether the node publishes for us (publishes())
 last_status: dict = {}                         # poll_status's latest, for health.check (off the lane)
+marks: dict = {"state": None, "read_posts": None, "polled": 0.0, "unrouted": set()}   # PFE-30's; read_posts: unknown yet
+MARK_EVERY = float(os.environ.get("POINTMAN_RESOLVE_MARK_EVERY") or 10)     # tests make these short
+MARK_POLL = float(os.environ.get("POINTMAN_RESOLVE_MARK_POLL") or 30)
 
 
 def poll_status() -> None:
@@ -357,6 +362,154 @@ def health(params):
              "state": state, "needs": [], "why": why}]
 
 
+# ------------------------------------------------------------ markers that call an agent (PFE-30)
+
+
+def marker_state() -> markers.State:
+    if marks["state"] is None:
+        marks["state"] = markers.State()
+    return marks["state"]
+
+
+def post_marker(call: markers.Call, snap: dict, routing: dict, work: Path) -> int | None:
+    """The marker as a post: the text, with a still of its frame drawn from the source files (or the
+    text as a file, if the still can't be drawn: core only posts with a file). The post's id."""
+    text = markers.compose(call, snap, routing["mention"], ext.node.get("machine"), ticks=ticks_count())
+    work.mkdir(parents=True, exist_ok=True)
+    shot = work / f"marker-{call.frame}.png"
+    drawn = timeline_render.still(snap, call.frame, shot)
+    if drawn.get("ok"):
+        build = media.build_image(shot, Path(tempfile.mkdtemp(dir=work)), lambda stage, f: None)
+    else:
+        ext.log(f"marker at {call.frame}: no still ({drawn.get('error')}); posting the text as a file")
+        shot = shot.with_suffix(".md")
+        shot.write_text(text, encoding="utf-8")
+        build = media.Build("document", [media.OutFile("document", shot, shot.name, "text/markdown")])
+    project, timeline = snap["project"]["name"], snap["timeline"]["name"]
+    post = ({"thread_id": routing["thread"], "text": text} if routing["thread"] else
+            {"channel_id": routing["channel"], "title": f"Resolve marker in {project}", "text": text})
+    answer = publish(build, project=project_for(project), asset_path=f"resolve/{project}/{timeline}/markers/{call.key}",
+                     title=f"Marker at {markers.clock(call.frame, snap['timeline'].get('fps') or 25)}", caption=text,
+                     post=post)
+    return answer.get("message_id")
+
+
+def reactions_of(post: int) -> list | None:
+    """A post's reactions, where the node lets extensions read posts; otherwise None, and it isn't asked
+    again until the extension restarts."""
+    if marks["read_posts"] is False:
+        return None
+    try:
+        answer = core("GET", f"/v1/node/messages/{post}") or {}
+        marks["read_posts"] = True
+        return answer.get("reactions") or []
+    except RuntimeError as e:
+        if "may not call" in str(e):
+            marks["read_posts"] = False
+            ext.log("the node doesn't let extensions read posts: markers turn green with resolve.marker_done")
+        else:
+            marks["read_posts"] = True      # allowed; this post just isn't there (yet)
+        return None
+
+
+def ticks_count() -> bool:
+    """Whether a ✅ on the post will turn the marker green: asked of the node once (any id will do)."""
+    if marks["read_posts"] is None:
+        reactions_of(0)
+    return bool(marks["read_posts"])
+
+
+def watch_markers() -> None:
+    """Every 10 s, between the lane's commands: new markers that call an agent are posted, and posted
+    ones turn green once they're done. Reads go through ReadOnly; the only write is MarkerWriter's."""
+    if not ext.settings.get("marker_calls", True) or not publishes():
+        return
+    try:
+        raw = bridge.connect()
+    except ResolveUnavailable:
+        return
+    resolve = ReadOnly(raw)
+    project = resolve.GetProjectManager().GetCurrentProject()
+    tl = project.GetCurrentTimeline() if project else None
+    if not project or not tl:
+        return
+    state, tid = marker_state(), tl.GetUniqueId()
+    writer = markers.MarkerWriter(raw.GetProjectManager().GetCurrentProject().GetCurrentTimeline())
+    todo = []
+    for call in markers.calls(tl.GetMarkers()):
+        done = state.get(tid, call.key)
+        if done is None:
+            todo.append(call)
+        elif done.get("status") == "posted" and done.get("marked") != "ok":
+            # posted, but Resolve didn't take the tag last time: try again, never post again
+            done["marked"] = writer.mark(call.frame, call.marker, markers.POSTED, done["tag"])
+            state.put(tid, call.key, done)
+    if todo:
+        snap, _ = timeline_snapshot.take(resolve)        # one snapshot for this round, so stills match
+        routes = markers.load_routes()
+        work = Path(ext.node.get("work_dir") or tempfile.gettempdir()) / "markers"
+        for call in todo[:3]:                             # a burst of new markers goes out over a few rounds
+            routing = markers.route(routes, project.GetName(), call.handle)
+            if not routing["thread"] and not routing["channel"]:
+                if project.GetName() not in marks["unrouted"]:
+                    marks["unrouted"].add(project.GetName())
+                    ext.log(f"markers in {project.GetName()!r} call agents, but routes.toml has nowhere for them")
+                continue
+            try:
+                post = post_marker(call, snap, routing, work)
+            except Exception as e:  # noqa: BLE001 - one marker failing mustn't stop the rest
+                ext.log(f"marker at {call.frame}: couldn't post: {e}")
+                continue
+            if not post:
+                ext.log(f"marker at {call.frame}: core stored the still but made no post (thread {routing['thread']})")
+                state.put(tid, call.key, {"status": "unposted", "frame": call.frame, "at": time.time()})
+                continue
+            tag = f"pm:{post}"
+            state.put(tid, call.key, {"status": "posted", "post": post, "tag": tag, "mention": routing["mention"],
+                                      "frame": call.frame, "project": project.GetName(), "timeline": tl.GetName(),
+                                      "timeline_id": tid, "at": time.time(),
+                                      "marked": writer.mark(call.frame, call.marker, markers.POSTED, tag)})
+    if time.monotonic() - marks["polled"] > MARK_POLL:
+        marks["polled"] = time.monotonic()
+        for key, entry in state.open():
+            if entry.get("status") != "posted" or entry.get("timeline_id") != tid:
+                continue
+            by = markers.done_by(reactions_of(entry["post"]) or [], entry.get("mention") or "")
+            if by:
+                finish(writer, state, key, entry, by)
+
+
+def finish(writer: markers.MarkerWriter, state: markers.State, key: str, entry: dict, by: str) -> dict:
+    found = writer.find(entry["tag"])
+    if found is None:
+        return {"marker": "not on the open timeline"}
+    frame, now = found
+    result = writer.mark(frame, now, markers.DONE, entry["tag"])
+    if result == "ok":
+        state.data[key] = {**entry, "status": "done", "done_by": by, "done_at": time.time()}
+        state.save()
+    return {"marker": result, "frame": frame}
+
+
+@ext.command("resolve.marker_done")
+def marker_done(job):
+    """The marker behind a post turns green: the agent it called is done with it."""
+    post = int(job.params["post"])
+    try:
+        raw = bridge.connect()
+    except ResolveUnavailable as e:
+        raise unavailable(e) from None
+    tl = raw.GetProjectManager().GetCurrentProject().GetCurrentTimeline()
+    if tl is None:
+        raise Retry("no timeline open in Resolve")
+    state = marker_state()
+    key, entry = next(((k, v) for k, v in state.data.items() if v.get("post") == post),
+                      (None, {"tag": f"pm:{post}", "post": post}))
+    result = finish(markers.MarkerWriter(tl), state, key or f"{tl.GetUniqueId()}/post-{post}", entry,
+                    job.params.get("by") or "agent")
+    return {"post": post, **result}
+
+
 # ------------------------------------------------------------ by itself: markers and auto renders
 
 
@@ -440,6 +593,7 @@ def auto_render() -> None:
 ext.every(10, poll_status, lane="resolve")
 ext.every(15, sync_markers, lane="resolve")
 ext.every(60, auto_render, lane="resolve")
+ext.every(MARK_EVERY, watch_markers, lane="resolve")
 
 if __name__ == "__main__":
     ext.run()

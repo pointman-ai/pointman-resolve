@@ -5,9 +5,9 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.3.0"
+version = "0.4.0"
 publisher = "aurelio"
-summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, and the timeline as data for agents."
+summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
 platforms = ["macos-arm64", "macos-x86_64"]
 
@@ -38,6 +38,12 @@ title = "Render a preview when idle (minutes)"
 description = "After the edit changes and the Mac has been idle this long. 0 is off."
 minimum = 0
 default = 0
+
+[settings.properties.marker_calls]
+type = "boolean"
+title = "Markers call agents"
+description = "A marker whose name or note starts with @pm, @pointman or @<agent> is posted on the board for that agent (routes in ~/.pointman-resolve/routes.toml), and turns cyan, then green once it's done."
+default = true
 
 [settings.properties.markers]
 type = "boolean"
@@ -70,6 +76,13 @@ lane = "resolve"
 ready_when = "connected"
 
 [[commands]]
+kind = "resolve.marker_done"
+title = "Mark a marker's call done"
+params = { type = "object", required = ["post"], properties = { post = { type = "integer", description = "The post the marker became." }, by = { type = "string" } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
 kind = "resolve.snapshot"
 title = "Snapshot the timeline"
 params = { type = "object", properties = { otio = { type = "boolean", default = true, description = "Also save Resolve's OTIO export of the timeline beside it." } }, additionalProperties = false }
@@ -95,6 +108,12 @@ description = "Render a Resolve timeline (the open one, or one by name) to a sma
 name = "resolve_still"
 command = "resolve.still"
 description = "Grab the frame under Resolve's playhead as a PNG and post it."
+returns = "result"
+
+[[tools]]
+name = "resolve_marker_done"
+command = "resolve.marker_done"
+description = "When you've done what a Resolve marker asked (a post that starts 'Resolve marker at'), turn the marker green in Resolve: give that post's id. Only the marker's colour changes."
 returns = "result"
 
 [[tools]]

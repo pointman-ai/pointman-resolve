@@ -6,11 +6,16 @@ Spacesheep timeline, Resolve 21.1, "scale to fit"):
   1. fit: the source is scaled to fit the timeline frame, centred (letter/pillarbox),
   2. crop: CropLeft/Right/Top/Bottom cut the fitted image,
   3. zoom about the frame centre, then Pan right and Tilt up.
-Crop/Pan/Tilt are in Resolve units, not pixels: on a 1920x1080 timeline one unit is 2 px (UNIT, measured
-2026-10-19 against ExportCurrentFrameAsStill: Pan 100 moved a clip 200 px, CropRight 260 cut 520 px).
-Other resolutions aren't measured yet; a snapshot can say `timeline.px_per_unit`.
+Crop/Pan/Tilt are in Resolve units, not pixels, and they're shares of the *fitted image*, not the frame:
+Pan and CropLeft/Right count 960 units across the fitted width, Tilt and CropTop/Bottom 540 down its height.
+A 16:9 source on a 1920x1080 timeline fills it, so a unit is 2 px both ways (UNIT; measured 2026-10-19 against
+ExportCurrentFrameAsStill: Pan 100 moved a clip 200 px, CropRight 260 cut 520 px). A 1728x1116 screen
+recording fits to 1672x1080, so its Pan unit is 2·1672/1920 = 1.74 px and its Tilt unit 2 px (measured with
+resolve.frame_check: Pan −9 and −12 put Resolve's desktop 2 and 3 px right of a 2 px/unit render, and 0 px
+off with this rule). A snapshot can say `timeline.px_per_unit` (resolve.calibrate) for other timeline sizes.
 So a cropped image whose fitted top-left is (x0, y0) lands at
-  (W/2 + zoom·(x0 − W/2) + u·Pan,  H/2 + zoom·(y0 − H/2) − u·Tilt),  zoom·(its size),  u = px per unit.
+  (W/2 + zoom·(x0 − W/2) + ux·Pan,  H/2 + zoom·(y0 − H/2) − uy·Tilt),  zoom·(its size),
+  ux = u·(fitted width / W),  uy = u·(fitted height / H),  u = px per unit.
 Opacity and fades (GetFades) apply to alpha. Alpha media (ProRes 4444 cutouts, graphics) keep theirs.
 Audio items are mixed at their AudioVolume (dB) with their fades.
 
@@ -60,11 +65,13 @@ def geometry(item: dict, W: int, H: int, unit: float = UNIT) -> dict | None:
     fit = min(W / m["w"], H / m["h"])
     wf, hf = m["w"] * fit, m["h"] * fit
     ox, oy = (W - wf) / 2, (H - hf) / 2
-    cl, cr, ct, cb = (unit * float(p.get(k) or 0) for k in ("CropLeft", "CropRight", "CropTop", "CropBottom"))
+    ux, uy = unit * wf / W, unit * hf / H  # units are shares of the fitted image (see the module's note)
+    cl, cr = (ux * float(p.get(k) or 0) for k in ("CropLeft", "CropRight"))
+    ct, cb = (uy * float(p.get(k) or 0) for k in ("CropTop", "CropBottom"))
     z = float(p.get("ZoomX") or 1.0)
     cw, ch = max(wf - cl - cr, 1), max(hf - ct - cb, 1)
-    x = W / 2 + z * (ox + cl - W / 2) + unit * float(p.get("Pan") or 0)
-    y = H / 2 + z * (oy + ct - H / 2) - unit * float(p.get("Tilt") or 0)
+    x = W / 2 + z * (ox + cl - W / 2) + ux * float(p.get("Pan") or 0)
+    y = H / 2 + z * (oy + ct - H / 2) - uy * float(p.get("Tilt") or 0)
     return {"fit": fit, "zoom": z, "crop": (cl, ct, cw, ch), "rect": (x, y, z * cw, z * ch), "alpha": m["alpha"],
             "opacity": float(p.get("Opacity", 100) or 100), "fitted": (wf, hf)}
 

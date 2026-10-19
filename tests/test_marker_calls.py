@@ -30,11 +30,11 @@ def scriptapp(name):
 
 class Node:
     def __init__(self, tmp: Path, read_posts: bool, project: str | None = None, home: dict | None = None,
-                 extra: str = ""):
+                 extra: str = "", standin: str = STANDIN):
         api = tmp / "api"
         (api / "Modules").mkdir(parents=True)
         rename = f"fake.Project.GetName = lambda self: {project!r}\n" if project else ""
-        (api / "Modules" / "DaVinciResolveScript.py").write_text(STANDIN + rename + extra, encoding="utf-8")
+        (api / "Modules" / "DaVinciResolveScript.py").write_text(standin + rename + extra, encoding="utf-8")
         (tmp / "Resolve.app").mkdir()
         (tmp / "fusionscript.so").write_text("")
         self.home = tmp / "home"

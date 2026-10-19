@@ -10,7 +10,13 @@ Units, as measured in PFE-9 (Resolve 21.1):
   ~40% of 25 fps clips, so trust `in` for those.
 - src_start: GetSourceStartTime, seconds on the media's own timecode (C0030 starts at 4843.68 s),
   sub-frame for 60 fps media.
-- props: GetProperties as Resolve gives them: Pan, Tilt and crops in output pixels, Zoom 1.0 = fit.
+- props: GetProperties as Resolve gives them. Pan, Tilt and crops are Resolve units, not pixels: one
+  unit is 2 px on a 1920x1080 timeline (measured against Resolve's own stills). Zoom 1.0 = fit.
+- grade: there's no GetCDL, but a node's tools show a grade (PFE-11 probe): GetToolsInNode is None on
+  an untouched node and lists "Primary Balance" etc. once SetCDL has run. `graded` is any of: more
+  than one node, tools or a LUT in a node, a colour group. Edit plans copy those grades (CopyGrades)
+  whenever they re-lay the clip.
+- media_frames: the file's length in its own frames (GetClipProperty "Frames"; empty for audio).
 """
 
 import json
@@ -61,6 +67,17 @@ def number(v):
         return None
 
 
+def grade_of(get: Reader, it, graph) -> dict:
+    """What can be seen of a clip's grade: its nodes, the tools and LUT in each, its colour group."""
+    n = get(graph, "GetNumNodes") or 0
+    tools = [get(graph, "GetToolsInNode", i) or [] for i in range(1, n + 1)]
+    luts = [get(graph, "GetLUT", i) or "" for i in range(1, n + 1)]
+    group = get(it, "GetColorGroup")
+    name = get(group, "GetName") if group else None
+    return {"nodes": n, "tools": tools, "luts": luts, "group": name,
+            "graded": n > 1 or any(tools) or any(luts) or bool(group)}
+
+
 def item_record(get: Reader, it, kind: str, track: int, t0: int) -> dict:
     start = get(it, "GetStart")
     mp = get(it, "GetMediaPoolItem")
@@ -71,6 +88,7 @@ def item_record(get: Reader, it, kind: str, track: int, t0: int) -> dict:
         "frames": get(it, "GetDuration"), "in": get(it, "GetLeftOffset"),
         "src_start": get(it, "GetSourceStartTime"), "src_frame": get(it, "GetSourceStartFrame"),
         "media_fps": number(get(mp, "GetClipProperty", "FPS")) if mp else None,
+        "media_frames": number(get(mp, "GetClipProperty", "Frames")) if mp else None,
         "file": (get(mp, "GetClipProperty", "File Path") or None) if mp else None,
         "media_id": get(mp, "GetUniqueId") if mp else None,
         "name": get(it, "GetName"), "type": get(it, "GetType"),
@@ -78,6 +96,8 @@ def item_record(get: Reader, it, kind: str, track: int, t0: int) -> dict:
         "fades": get(it, "GetFades"), "speed": get(it, "GetSpeed"),
         "enabled": get(it, "GetClipEnabled"), "color": get(it, "GetClipColor") or "",
         "nodes": get(graph, "GetNumNodes") if graph else None,
+        "grade": grade_of(get, it, graph) if graph else None,
+        "fusion": get(it, "GetFusionCompCount") if kind == "video" else None,
         "linked": [x for x in (get(l, "GetUniqueId") for l in get(it, "GetLinkedItems", default=[]) or [] if l) if x],
         "markers": markers_list(get(it, "GetMarkers")),
     }

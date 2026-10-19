@@ -67,6 +67,9 @@ under it, and a still of that frame. The still is drawn from the source files by
 - **Where:** `~/.pointman-resolve/routes.toml` maps each Resolve project to a board thread and to the
   agent `@pm` means there. A project that isn't listed goes to the `[unmapped]` thread or channel,
   mentioning you. If neither is set, its markers wait.
+- **Who:** `agents` in the same file lists the handles a marker may call (the extension can't ask the
+  board who exists). A handle that isn't listed, like a typo, goes to the project's agent with a note
+  that it wasn't recognised.
 - **The marker answers:** once posted it turns **cyan**, with custom data `pm:<post id>`. It turns
   **green** when the agent calls `resolve.marker_done` (tool `resolve_marker_done`). Where the node lets
   extensions read posts, a ✅ from that agent or from you does it too. The name and note are never

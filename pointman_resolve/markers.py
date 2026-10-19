@@ -79,6 +79,9 @@ EXAMPLE_ROUTES = """\
 # A project that isn't listed starts a thread in [unmapped]'s channel, mentioning `person` (no channel
 # set: those markers wait, and resolve.status says so).
 person = "james"
+# The handles a marker may call. One that isn't here goes to the project's agent, with a note that
+# it wasn't recognised (an extension can't ask the board who exists). Leave it out to trust any handle.
+agents = ["editor", "james", "rtx-render", "sheepgfx", "thumbs", "scene", "camgrab", "resolvedoc", "patchbay"]
 
 [unmapped]
 # thread = 123       # a board thread to post in, or
@@ -98,16 +101,22 @@ def load_routes(path: Path | None = None) -> dict:
 
 
 def route(routes: dict, project: str, handle: str | None) -> dict:
-    """{thread, channel, mention}: a reply in the project's `thread`, or a new thread in the unmapped
-    `channel`, mentioning `mention`. Neither: nowhere to post yet."""
+    """{thread, channel, mention, unknown}: a reply in the project's `thread`, or a new thread in the
+    unmapped `channel`, mentioning `mention`. Neither: nowhere to post yet. A handle that isn't in
+    `agents` goes to the project's agent instead, and comes back as `unknown`."""
     p = (routes.get("projects") or {}).get(project) or {}
     person = routes.get("person") or "james"
+    agents = {str(a).lower().lstrip("@") for a in routes["agents"]} if routes.get("agents") else None
+    unknown = None
+    if handle and agents is not None and handle not in agents and handle != person:
+        unknown, handle = handle, None
     if p.get("thread"):
-        return {"thread": int(p["thread"]), "channel": None, "mention": handle or p.get("agent") or person}
+        return {"thread": int(p["thread"]), "channel": None, "mention": handle or p.get("agent") or person,
+                "unknown": unknown}
     un = routes.get("unmapped") or {}
     return {"thread": int(un["thread"]) if un.get("thread") else None,
             "channel": int(un["channel"]) if un.get("channel") and not un.get("thread") else None,
-            "mention": handle or person}
+            "mention": handle or person, "unknown": unknown}
 
 
 # ------------------------------------------------------------ the post
@@ -145,13 +154,16 @@ def under(snap: dict, frame: int) -> list[str]:
     return out
 
 
-def compose(call: Call, snap: dict, mention: str, machine: str | None = None, *, ticks: bool = False) -> str:
+def compose(call: Call, snap: dict, mention: str, machine: str | None = None, *, ticks: bool = False,
+            unknown: str | None = None) -> str:
     """The post: who it's for, where it is, what James wrote, what's under it, and how to say it's done."""
     tl = snap["timeline"]
     tc = timecode(call.frame, tl.get("fps") or 25, tl.get("start_timecode"))
     lines = [f"@{mention} Resolve marker at **{clock(call.frame, tl.get('fps') or 25)}** ({tc}), "
              f"{snap['project']['name']} › {tl['name']}:"]
     lines += ["> " + line for line in (call.text or "(no note)").splitlines()]
+    if unknown:  # in backticks, so the board doesn't take it as a mention
+        lines.append(f"\n_The marker calls `@{unknown}`, which I didn't recognise, so it's here for @{mention}._")
     clips = under(snap, call.frame)
     if clips:
         lines.append("")

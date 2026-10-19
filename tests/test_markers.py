@@ -32,14 +32,18 @@ def test_which_markers_call_an_agent():
 
 def test_routes_thread_default_agent_and_dm():
     routes = M.load_routes()                                     # no routes.toml yet: the example
-    assert M.route(routes, "feat-flow-with-spacesheep", None) == {"thread": 10399, "channel": None, "mention": "editor"}
+    assert M.route(routes, "feat-flow-with-spacesheep", None) == {"thread": 10399, "channel": None, "mention": "editor",
+                                                                  "unknown": None}
     assert M.route(routes, "feat-flow-with-spacesheep", "rtx-render")["mention"] == "rtx-render"
     # no unmapped channel set yet: nowhere to post
-    assert M.route(routes, "some-other-project", None) == {"thread": None, "channel": None, "mention": "james"}
+    assert M.route(routes, "some-other-project", None) == {"thread": None, "channel": None, "mention": "james",
+                                                           "unknown": None}
     routes["unmapped"] = {"channel": 42}
-    assert M.route(routes, "some-other-project", "editor") == {"thread": None, "channel": 42, "mention": "editor"}
+    assert M.route(routes, "some-other-project", "editor") == {"thread": None, "channel": 42, "mention": "editor",
+                                                               "unknown": None}
     routes["unmapped"] = {"thread": 13661, "channel": 42}       # a thread wins
-    assert M.route(routes, "some-other-project", None) == {"thread": 13661, "channel": None, "mention": "james"}
+    assert M.route(routes, "some-other-project", None) == {"thread": 13661, "channel": None, "mention": "james",
+                                                           "unknown": None}
 
 
 def test_timecode_and_the_post():
@@ -110,3 +114,17 @@ def test_find_our_marker_after_a_ripple_moved_it():
     frame, m = w.find("pm:14200")
     assert frame == 420 and w.mark(frame, m, M.DONE, "pm:14200") == "ok" and tl.markers[420]["color"] == "Green"
     assert w.find("pm:1") is None
+
+
+def test_an_unknown_handle_goes_to_the_projects_agent_with_a_note():
+    routes = M.load_routes()
+    r = M.route(routes, "feat-flow-with-spacesheep", "editr")
+    assert (r["mention"], r["unknown"]) == ("editor", "editr")
+    assert M.route(routes, "feat-flow-with-spacesheep", "rtx-render")["unknown"] is None   # listed: trusted
+    assert M.route(routes, "feat-flow-with-spacesheep", "james")["unknown"] is None        # the person always is
+    del routes["agents"]                                                                   # no list: any handle
+    assert M.route(routes, "feat-flow-with-spacesheep", "editr") == {"thread": 10399, "channel": None,
+                                                                     "mention": "editr", "unknown": None}
+    snap, _ = take(ReadOnly(fake.Resolve(fake.sample_timeline())))
+    text = M.compose(M.Call(25, mk("@editr look"), "editr"), snap, "editor", unknown="editr")
+    assert text.startswith("@editor ") and "`@editr`, which I didn't recognise, so it's here for @editor" in text

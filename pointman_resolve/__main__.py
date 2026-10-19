@@ -374,7 +374,8 @@ def marker_state() -> markers.State:
 def post_marker(call: markers.Call, snap: dict, routing: dict, work: Path) -> int | None:
     """The marker as a post: the text, with a still of its frame drawn from the source files (or the
     text as a file, if the still can't be drawn: core only posts with a file). The post's id."""
-    text = markers.compose(call, snap, routing["mention"], ext.node.get("machine"), ticks=ticks_count())
+    text = markers.compose(call, snap, routing["mention"], ext.node.get("machine"), ticks=ticks_count(),
+                           unknown=routing.get("unknown"))
     work.mkdir(parents=True, exist_ok=True)
     shot = work / f"marker-{call.frame}.png"
     drawn = timeline_render.still(snap, call.frame, shot)

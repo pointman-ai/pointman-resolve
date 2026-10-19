@@ -36,6 +36,7 @@ from . import markers, media
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
 from .timeline import check as timeline_check
 from .timeline import framecheck
+from .timeline import qc as timeline_qc
 from .timeline import diff as timeline_diff
 from .timeline import render as timeline_render
 from .timeline import snapshot as timeline_snapshot
@@ -449,6 +450,40 @@ def shadow(job):
     finally:
         emptied(job.work)
     return {**published, **result}
+
+
+@ext.command("resolve.qc")
+def qc_cmd(job):
+    """A QC report on the open timeline (PFE-16): black, flash frames and gaps, frozen screen recordings, and
+    for a range up to 15 min the mix's loudness, true peak and dead air. Reads the timeline in memory and the
+    source files; Resolve and the playhead aren't touched. Posts the report as a document."""
+    p = job.params
+    try:
+        resolve = bridge.connect()
+    except ResolveUnavailable as e:
+        raise unavailable(e) from None
+    snap = live_snapshot(resolve)
+    fps = snap["timeline"]["fps"] or 25.0
+    a = timeline_render.parse_time(p["from"], fps) if p.get("from") is not None else None
+    b = timeline_render.parse_time(p["to"], fps) if p.get("to") is not None else None
+    r = timeline_qc.report(snap, a, b, audio=p.get("sound", True), sources=p.get("sources", True))
+    project, timeline = snap["project"]["name"], snap["timeline"]["name"]
+    doc = Path(job.work) / "qc.md"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text(timeline_qc.markdown(r, timeline), encoding="utf-8")
+    short = {k: r[k] for k in ("ok", "range", "counts", "sound")} | {"issues": r["issues"][:50],
+                                                                     "truncated": len(r["issues"]) > 50}
+    if not publishes():
+        job.output(doc, kind="document", meta=short)
+        return short
+    try:
+        build = media.Build("document", [media.OutFile("document", doc, doc.name, "text/markdown")])
+        summary = ", ".join(f"{n} {k}" for k, n in sorted(r["counts"].items())) or "nothing found"
+        published = publish(build, project=project_for(project), asset_path=f"resolve/{project}/{timeline}/qc",
+                            title=f"{timeline} QC", caption=f"QC {r['range']}: {summary}", post=posted_for(job))
+    finally:
+        emptied(job.work)
+    return {**published, **short}
 
 
 @ext.command("resolve.frame_check")

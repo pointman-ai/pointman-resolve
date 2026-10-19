@@ -4,10 +4,13 @@ can watch and listen to the edit without touching Resolve or James's screen.
 Video tracks are stacked bottom to top, each clip placed the way Resolve places it (measured on the
 Spacesheep timeline, Resolve 21.1, "scale to fit"):
   1. fit: the source is scaled to fit the timeline frame, centred (letter/pillarbox),
-  2. crop: CropLeft/Right/Top/Bottom cut the fitted image, in timeline pixels,
-  3. zoom about the frame centre, then Pan right and Tilt up (output pixels).
+  2. crop: CropLeft/Right/Top/Bottom cut the fitted image,
+  3. zoom about the frame centre, then Pan right and Tilt up.
+Crop/Pan/Tilt are in Resolve units, not pixels: on a 1920x1080 timeline one unit is 2 px (UNIT, measured
+2026-10-19 against ExportCurrentFrameAsStill: Pan 100 moved a clip 200 px, CropRight 260 cut 520 px).
+Other resolutions aren't measured yet; a snapshot can say `timeline.px_per_unit`.
 So a cropped image whose fitted top-left is (x0, y0) lands at
-  (W/2 + zoom·(x0 − W/2) + Pan,  H/2 + zoom·(y0 − H/2) − Tilt),  zoom·(its size).
+  (W/2 + zoom·(x0 − W/2) + u·Pan,  H/2 + zoom·(y0 − H/2) − u·Tilt),  zoom·(its size),  u = px per unit.
 Opacity and fades (GetFades) apply to alpha. Alpha media (ProRes 4444 cutouts, graphics) keep theirs.
 Audio items are mixed at their AudioVolume (dB) with their fades.
 
@@ -23,6 +26,7 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
+UNIT = 2.0  # px per Crop/Pan/Tilt unit on a 1920x1080 timeline
 ALPHA_FMTS = ("yuva", "rgba", "bgra", "argb", "abgr", "gbrap", "ya")
 
 
@@ -47,7 +51,7 @@ def parse_time(v: str | int | float, fps: float) -> int:
     return int(float(v))
 
 
-def geometry(item: dict, W: int, H: int) -> dict | None:
+def geometry(item: dict, W: int, H: int, unit: float = UNIT) -> dict | None:
     """Where Resolve draws this video item in a W×H frame: crop box in fitted px, output rect, zoom."""
     m = probe(item["file"])
     if not m["w"] or not m["h"]:
@@ -56,11 +60,11 @@ def geometry(item: dict, W: int, H: int) -> dict | None:
     fit = min(W / m["w"], H / m["h"])
     wf, hf = m["w"] * fit, m["h"] * fit
     ox, oy = (W - wf) / 2, (H - hf) / 2
-    cl, cr, ct, cb = (float(p.get(k) or 0) for k in ("CropLeft", "CropRight", "CropTop", "CropBottom"))
+    cl, cr, ct, cb = (unit * float(p.get(k) or 0) for k in ("CropLeft", "CropRight", "CropTop", "CropBottom"))
     z = float(p.get("ZoomX") or 1.0)
     cw, ch = max(wf - cl - cr, 1), max(hf - ct - cb, 1)
-    x = W / 2 + z * (ox + cl - W / 2) + float(p.get("Pan") or 0)
-    y = H / 2 + z * (oy + ct - H / 2) - float(p.get("Tilt") or 0)
+    x = W / 2 + z * (ox + cl - W / 2) + unit * float(p.get("Pan") or 0)
+    y = H / 2 + z * (oy + ct - H / 2) - unit * float(p.get("Tilt") or 0)
     return {"fit": fit, "zoom": z, "crop": (cl, ct, cw, ch), "rect": (x, y, z * cw, z * ch), "alpha": m["alpha"],
             "opacity": float(p.get("Opacity", 100) or 100), "fitted": (wf, hf)}
 
@@ -74,6 +78,7 @@ def plan(snap: dict, start: int, end: int) -> dict:
     """Which clips draw (and hear) in [start, end), with their source times and geometry."""
     tl = snap["timeline"]
     fps, W, H = tl["fps"], tl["width"], tl["height"]
+    unit = float(tl.get("px_per_unit") or UNIT)
     enabled = {(t["kind"], t["index"]) for t in snap["tracks"] if t.get("enabled") is not False}
     video, audio, skipped = [], [], []
     for it in snap["items"]:
@@ -95,7 +100,7 @@ def plan(snap: dict, start: int, end: int) -> dict:
                             "name": it.get("name")})
             continue
         if it["kind"] == "video":
-            g = geometry(it, W, H)
+            g = geometry(it, W, H, unit)
             if g is None:
                 skipped.append({"id": it["id"], "lane": f"V{it['track']}", "at": s0, "why": "unreadable media"})
                 continue

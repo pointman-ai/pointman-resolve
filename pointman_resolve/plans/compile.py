@@ -385,6 +385,12 @@ def op_join(m: Model, op: dict, g: Group) -> None:
             why = f"there's a transition at {clock(b['record'], m.fps)}"
         if why:
             raise PlanError(f"can't join {m.name(key)} {a.get('name')}: {why}")
+    graded = [p for p in ps if (p.get("grade") or {}).get("graded")]
+    if graded and not op.get("same_grade"):
+        raise PlanError(f"{m.name(key)} {graded[0].get('name')} is graded, and Resolve can't read a grade's values (no "
+                        "GetCDL; ExportLUT only works on the Color page), so one clip with the first piece's grade could "
+                        "change how the others look. If you know they're the same (one CDL set on all of them by a tool), "
+                        "say how in \"same_grade\"")
     marked = [p for p in ps[1:] if p.get("markers")]
     if marked or ps[0].get("markers"):
         raise PlanError(f"{m.name(key)} {(marked or ps)[0].get('name')} has clip markers, which a join can't carry yet "

@@ -120,7 +120,7 @@ A plan is a list of ops on item ids from a snapshot, frames counted from the tim
 | `place` | `track`, `file`, `record`, `frames`, `in?`, `props?` | a new clip |
 | `set` | `items`, `props?`, `fades?`, `color?`, `enabled?` | settings, in place |
 | `delete` | `items` | no ripple |
-| `join` | `items` | a through-edit (same file running on frame for frame) into one clip |
+| `join` | `items`, `same_grade?` | a through-edit (same file running on frame for frame) into one clip. Graded pieces need `same_grade`: how you know their grades match, since Resolve can't read a grade's values on the Edit page |
 | `cut` | `ranges`, `fill` | ripple-deletes each `[s, e)` across every track, last first: clips crossing an edge are split, a track with nothing there gets `fill` (black, or silence, mono where the track is), and every later clip is checked to have moved by exactly `e - s` |
 
 An op on the person's own tracks (named camera, screen or voice) needs `ok`: what asked for it. `props` are

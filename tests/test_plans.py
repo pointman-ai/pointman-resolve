@@ -254,3 +254,15 @@ def test_a_cut_whose_undo_would_relay_too_much_needs_saying_so():
     assert problems and "re-lay 5 clips" in problems[0] and "\"max_relay\": 5" in problems[0]
     op["max_relay"] = 5
     assert not compile_plan(snap, {"ops": [op]}, media=media)["problems"]
+
+
+def test_graded_pieces_join_only_when_the_plan_says_their_grades_match(tmp_path):
+    cam = fake.Media("/raw/cut-alpha.mov")
+    a, b = fake.Item("g1", 90000, 50, 100, cam), fake.Item("g2", 90050, 30, 150, cam)
+    a.tools = b.tools = {1: ["Primary Balance"]}             # same tools: the values can't be read
+    tl = fake.Timeline({("video", 1): [a, b]})
+    plan = {"ops": [{"op": "join", "items": ["g1", "g2"]}]}
+    assert "say how in \"same_grade\"" in compile_plan(snap_of(tl), plan)["problems"][0]
+    plan["ops"][0]["same_grade"] = "cutout_look.py set one CDL on every piece"
+    snap, rec, _ = run(tl, plan, tmp_path)
+    assert lanes(tl)["V1"] == [(0, 80, 100, "cut-alpha.mov")] and tl.tracks[("video", 1)][0].tools == {1: ["Primary Balance"]}

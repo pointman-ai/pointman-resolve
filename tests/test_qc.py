@@ -33,9 +33,10 @@ def media(tmp_path_factory):
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", src, *extra, str(d / name)], check=True)
         return str(d / name)
     return {
-        "live": make("live.mp4", "testsrc2=s=320x180:r=25:d=40", "-pix_fmt", "yuv420p"),
-        "frozen": make("frozen.mp4", "color=c=gray:s=320x180:r=25:d=40", "-pix_fmt", "yuv420p"),
+        "live": make("live.mp4", "testsrc2=s=320x180:r=25:d=70", "-pix_fmt", "yuv420p"),
+        "frozen": make("frozen.mp4", "color=c=gray:s=320x180:r=25:d=70", "-pix_fmt", "yuv420p"),
         # 2 s of tone, 3 s of silence, 2 s of tone
+        "short": make("fill.mov", "color=c=black:s=320x180:r=25:d=20", "-pix_fmt", "yuv420p"),
         "voice": make("voice.wav", "aevalsrc='if(between(t\\,2\\,5)\\,0\\,0.3*sin(2*PI*220*t))':s=48000:d=7"),
     }
 
@@ -59,6 +60,9 @@ def test_a_frozen_recording_is_found_and_a_live_one_isnt(media):
     found = qc.frozen(s)
     assert [Path(f["file"]).name for f in found] == ["frozen.mp4"]
     assert "doesn't change" in found[0]["what"]
+    # a fill or hold is still by design: short files are left alone
+    s2 = snap([item("fill", 1, 0, 25 * 20, media["short"], src_start=0.0)], end=25 * 20)
+    assert qc.frozen(s2) == []
 
 
 @needs_ffmpeg
@@ -77,3 +81,20 @@ def test_the_report_counts_and_reads(monkeypatch):
     r = qc.report(s, audio=False)
     assert not r["ok"] and r["counts"] == {"black": 1} and r["issues"][0]["at"] == 100
     assert "1 black" in qc.markdown(r, "t")
+
+
+@needs_ffmpeg
+def test_a_gap_under_a_full_frame_clip_isnt_a_flash_and_disabled_clips_dont_cover(media):
+    s = snap([item("a", 1, 0, 100, media["live"]), item("b", 1, 101, 99, media["live"]),
+              item("cover", 2, 90, 30, media["live"]),                                     # opaque, full frame
+              item("off", 3, 150, 50, media["live"], enabled=False)], end=200)
+    found = [(i["check"], i["at"]) for i in qc.picture(s, 0, 200)]
+    assert ("flash", 100) not in found and ("black", 100) not in found
+
+
+def test_the_report_says_times_and_that_sound_is_an_estimate(monkeypatch):
+    r = {"ok": False, "range": "0:00.00–0:10.00", "counts": {"black": 1}, "fps": 25.0,
+         "sound": {"lufs": -15.8, "true_peak": -1.1, "target_lufs": -14.0, "estimate": qc.ESTIMATE},
+         "issues": [{"check": "black", "at": 1512, "to": 1513, "what": "no video for 1 frames"}]}
+    md = qc.markdown(r, "t")
+    assert "| 1:00.12 | black |" in md and "clip levels only" in md and "about -15.8 LUFS" in md

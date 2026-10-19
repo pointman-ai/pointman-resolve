@@ -8,7 +8,8 @@ Picture (from the snapshot):
 - frozen: a video source (not an alpha cutout or graphic) whose frames don't change across the stretches the cut
   uses. On Spacesheep v1, three OBS recordings were one frozen frame for 31 minutes of the cut.
 Sound (the mix of a range, drawn like the shadow render, up to AUDIO_MAX_S):
-- loudness (integrated LUFS) and true peak, against a target (YouTube: -14 LUFS, peaks under -1 dBTP);
+- loudness (integrated LUFS) and true peak, against a target (YouTube: -14 LUFS, peaks under -1 dBTP). An ESTIMATE:
+  the mix has the source files at each clip's AudioVolume, but not track faders, the master bus or Fairlight effects;
 - dead air: stretches of the mix quieter than -50 dB for 1.5 s or more.
 """
 
@@ -27,6 +28,7 @@ FROZEN_MIN_S = 20         # only sources the cut uses for this long are worth de
 AUDIO_MAX_S = 900         # the mix is rendered in one go: 15 minutes at most per report
 TARGET_LUFS, MAX_PEAK = -14.0, -1.0
 DEAD_DB, DEAD_S = -50, 1.5
+ESTIMATE = "clip levels only: no track faders, master bus or Fairlight effects"
 
 
 def niced():
@@ -36,6 +38,13 @@ def niced():
 def tc(frame: int, fps: float) -> str:
     s = frame / fps
     return f"{int(s // 60)}:{s % 60:05.2f}"
+
+
+def clock(frame: int, fps: float) -> str:
+    """m:ss.ff, read on a phone."""
+    f = int(frame)
+    n = round(fps)
+    return f"{f // n // 60}:{f // n % 60:02d}.{f % n:02d}"
 
 
 def _spans(frames: list[int]) -> list[tuple[int, int]]:
@@ -54,7 +63,7 @@ def picture(snap: dict, start: int, end: int) -> list[dict]:
     fps = tl.get("fps") or 25.0
     enabled = {t["index"] for t in snap["tracks"] if t["kind"] == "video" and t.get("enabled") is not False}
     video = [i for i in snap["items"] if i.get("kind") == "video" and i.get("track") in enabled
-             and i.get("type") != "transition" and i.get("record") is not None]
+             and i.get("type") != "transition" and i.get("record") is not None and i.get("enabled") is not False]
     issues = []
     covered = set()
     for it in video:
@@ -76,19 +85,36 @@ def picture(snap: dict, start: int, end: int) -> list[dict]:
                                "what": f"V{track} {it.get('name')} is {n} frame{'s' * (n != 1)} long"})
         for x, y in zip(items, items[1:]):
             gap_a, gap_b = x["record"] + (x.get("frames") or 0), y["record"]
-            if 0 < gap_b - gap_a < FLASH and start <= gap_a < end:
+            if 0 < gap_b - gap_a < FLASH and start <= gap_a < end and not covered_above(video, track, gap_a, gap_b, tl):
                 issues.append({"check": "flash", "at": gap_a, "to": gap_b, "lane": f"V{track}",
                                "what": f"a {gap_b - gap_a}-frame gap on V{track} between {x.get('name')} and {y.get('name')}"})
     return issues
 
 
+def covered_above(video: list[dict], track: int, a: int, b: int, tl: dict) -> bool:
+    """An opaque full-frame clip on a higher track over all of [a, b): nothing below shows there."""
+    W, H = tl.get("width") or 1920, tl.get("height") or 1080
+    for o in video:
+        if o["track"] > track and o["record"] <= a and b <= o["record"] + (o.get("frames") or 0) and o.get("file"):
+            g = R.geometry(o, W, H, float(tl.get("px_per_unit") or R.UNIT))
+            if g and R.covers_frame(g, W, H):
+                return True
+    return False
+
+
+SOURCE_TRACKS = ("screen", "desktop", "camera", "cam")
+
+
 def frozen(snap: dict, *, samples: int = 4) -> list[dict]:
     """Video sources the cut uses whose frames are the same from end to end (a capture that froze)."""
     fps = snap["timeline"].get("fps") or 25.0
+    names = {t["index"]: (t.get("name") or "").lower() for t in snap["tracks"] if t["kind"] == "video"}
+    recorded = {i for i, n in names.items() if any(w in n for w in SOURCE_TRACKS)} or set(names)
     uses: dict[str, list] = {}
     for it in snap["items"]:
         f = it.get("file")
-        if it.get("kind") != "video" or not f or it.get("type") == "transition" or not (it.get("frames") or 0):
+        if it.get("kind") != "video" or not f or it.get("type") == "transition" or not (it.get("frames") or 0) \
+                or it.get("track") not in recorded or Path(f).suffix.lower() in (".png", ".jpg", ".jpeg", ".tif", ".tiff"):
             continue
         uses.setdefault(f, []).append(it)
     out = []
@@ -100,7 +126,7 @@ def frozen(snap: dict, *, samples: int = 4) -> list[dict]:
         # across the whole file: a capture that froze is the same from end to end, while a page that just sits
         # still for the minute the cut uses is fine (Spacesheep's 10-32-22)
         dur = duration(f)
-        if not dur:
+        if not dur or dur < 60:                           # fills, holds and stills are still by design
             continue
         lo, hi = 0.0, dur
         times = [lo + (hi - lo) * (k + 0.5) / samples for k in range(samples)]
@@ -175,13 +201,15 @@ def sound(snap: dict, start: int, end: int, *, target: float = TARGET_LUFS) -> t
     lufs = re.findall(r"I:\s+(-?[0-9.]+) LUFS", err)
     peak = re.findall(r"Peak:\s+(-?[0-9.]+|-inf) dBFS", err)
     stats = {"lufs": float(lufs[-1]) if lufs else None, "true_peak": float(peak[-1]) if peak and peak[-1] != "-inf" else None,
-             "target_lufs": target, "clips": m["clips"]}
+             "target_lufs": target, "clips": m["clips"], "estimate": ESTIMATE}
     issues = []
     if stats["lufs"] is not None and abs(stats["lufs"] - target) > 1.0:
         issues.append({"check": "loudness", "at": start, "to": end,
-                       "what": f"{stats['lufs']:.1f} LUFS, target {target:.0f} (raise by {target - stats['lufs']:+.1f} dB)"})
+                       "what": f"about {stats['lufs']:.1f} LUFS ({ESTIMATE}), target {target:.0f}: "
+                               f"{target - stats['lufs']:+.1f} dB if the mix adds nothing"})
     if stats["true_peak"] is not None and stats["true_peak"] > MAX_PEAK:
-        issues.append({"check": "peak", "at": start, "to": end, "what": f"true peak {stats['true_peak']:.1f} dBTP, over {MAX_PEAK:.0f}"})
+        issues.append({"check": "peak", "at": start, "to": end,
+                       "what": f"true peak about {stats['true_peak']:.1f} dBTP ({ESTIMATE}), over {MAX_PEAK:.0f}"})
     starts = [float(x) for x in re.findall(r"silence_start: (-?[0-9.]+)", err)]
     ends = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", err)]
     for s, e in zip(starts, ends + [ (end - start) / fps ] * (len(starts) - len(ends))):
@@ -210,7 +238,7 @@ def report(snap: dict, start: int | None = None, end: int | None = None, *, audi
     counts = {}
     for i in issues:
         counts[i["check"]] = counts.get(i["check"], 0) + 1
-    return {"ok": not issues, "from": start, "to": end, "range": f"{tc(start, fps)}–{tc(end, fps)}", "counts": counts,
+    return {"ok": not issues, "from": start, "to": end, "fps": fps, "range": f"{tc(start, fps)}–{tc(end, fps)}", "counts": counts,
             "sound": stats, "issues": issues}
 
 
@@ -222,10 +250,12 @@ def markdown(r: dict, title: str) -> str:
         lines.append(", ".join(f"{n} {k}" for k, n in sorted(r["counts"].items())))
     s = r.get("sound") or {}
     if s.get("lufs") is not None:
-        lines.append(f"\nSound: {s['lufs']:.1f} LUFS (target {s['target_lufs']:.0f}), true peak {s.get('true_peak')} dBTP.")
+        lines.append(f"\nSound, estimated from {s['estimate']}: about {s['lufs']:.1f} LUFS (target {s['target_lufs']:.0f}), "
+                     f"true peak about {s.get('true_peak')} dBTP.")
     elif s.get("skipped"):
         lines.append(f"\nSound: {s['skipped']}.")
     if r["issues"]:
         lines += ["", "| At | Check | What |", "|---|---|---|"]
-        lines += [f"| {i['at']} | {i['check']} | {i['what']} |" for i in r["issues"][:200]]
+        fps = r.get("fps") or 25.0
+        lines += [f"| {clock(i['at'], fps)} | {i['check']} | {i['what']} |" for i in r["issues"][:200]]
     return "\n".join(lines) + "\n"

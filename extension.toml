@@ -216,5 +216,5 @@ returns = "result"
 [[tools]]
 name = "resolve_qc"
 command = "resolve.qc"
-description = "QC the open Resolve timeline without touching Resolve: black frames, flash frames (clips or gaps under 3 frames), screen recordings that are one frozen frame, and for a range up to 15 min the mix's loudness (target -14 LUFS), true peak and dead air (1.5 s+ under -50 dB). Posts a report. Run it after a batch of changes, and on new footage the day it lands."
+description = "QC the open Resolve timeline without touching Resolve: black frames, flash frames (clips or gaps under 3 frames), screen recordings that are one frozen frame, and for a range up to 15 min the mix's loudness (target -14 LUFS), true peak and dead air (1.5 s+ under -50 dB). The sound figures are an estimate from clip levels (no track faders, bus or Fairlight effects). Posts a report. It holds up marker posts while it runs: about 25 s for the frozen check of a whole timeline, plus about 5 s a minute of mix. Run it after a batch of changes, and on new footage the day it lands."
 returns = "result"

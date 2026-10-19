@@ -15,7 +15,7 @@ For agents changing a DaVinci Resolve timeline. Skip it otherwise.
 
 **Check in Resolve, not in your head.**
 - Crop, Pan and Tilt are Resolve units, not pixels: one unit is 2 px on a 1920×1080 timeline. Measure other sizes before you trust a formula.
-- After any change to position, zoom, crop, colour or transitions, look at Resolve's own frame (`Project.ExportCurrentFrameAsStill`), not only a shadow render.
+- After any change to position, zoom, crop, colour or transitions, look at Resolve's own frame, not only a shadow render: `resolve_frame_check` does it with the playhead guard and shows where the two differ.
 - After any cut or move, check frame by frame that stacked pieces still follow the clip under them.
 
 **Keep the timeline clean.**

@@ -35,6 +35,7 @@ except ImportError:                 # a node from before the rename (thread 2255
 from . import markers, media
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
 from .timeline import check as timeline_check
+from .timeline import framecheck
 from .timeline import diff as timeline_diff
 from .timeline import render as timeline_render
 from .timeline import snapshot as timeline_snapshot
@@ -343,6 +344,91 @@ def check_cmd(job):
     folder = stored(job.params.get("timeline"))
     name = job.params.get("snapshot") or timeline_snapshot.snapshots(folder)[-1].name
     return timeline_check.check(timeline_snapshot.named(folder, name))
+
+
+# ------------------------------------------------------------ Resolve's own frame (PFE-36)
+
+
+def live_snapshot(resolve) -> dict:
+    """A fresh snapshot of the open timeline (no OTIO), so the shadow render draws what's there now."""
+    ro = ReadOnly(resolve)
+    project = ro.GetProjectManager().GetCurrentProject()
+    tl = project.GetCurrentTimeline() if project else None
+    if not project or not tl:
+        raise Retry("no project or timeline open in Resolve")
+    return read(timeline_snapshot.write(ro, timeline_snapshot.store_dir(project.GetName(), tl.GetName()), otio=False))
+
+
+def grab_frame(job, frame_of) -> tuple[dict, int, dict, Path]:
+    """Snapshot, pick the frame (frame_of(snap)), and export Resolve's picture of it with the playhead put back."""
+    try:
+        resolve = bridge.connect()
+    except ResolveUnavailable as e:
+        raise unavailable(e) from None
+    snap = live_snapshot(resolve)
+    frame = frame_of(snap)
+    project = resolve.GetProjectManager().GetCurrentProject()
+    t = snap["timeline"]
+    png = Path(job.work) / "resolve.png"
+    try:
+        got = framecheck.grab(project, project.GetCurrentTimeline(), frame, t["fps"] or 25.0, t["start_frame"], png,
+                              wait=float(job.params.get("wait", 3)))
+    except framecheck.Busy as e:
+        raise Retry(str(e)) from None
+    return snap, frame, got, png
+
+
+def frame_of_param(job):
+    return lambda snap: timeline_render.parse_time(job.params["frame"], snap["timeline"]["fps"] or 25.0)
+
+
+@ext.command("resolve.frame_check")
+def frame_check(job):
+    """Resolve's own picture of one frame against the shadow render of it: PSNR, where they differ, and the
+    clips there. Moves the playhead only while nobody is working, and always puts it back."""
+    snap, frame, got, png = grab_frame(job, frame_of_param(job))
+    t = snap["timeline"]
+    shadow = timeline_render.still(snap, frame, Path(job.work) / "shadow.png", width=t["width"] or 1920)
+    if not shadow["ok"]:
+        raise RuntimeError(f"the shadow render failed: {shadow['error']}")
+    side = Path(job.work) / "frame-check.png"
+    cmp = framecheck.compare(png, Path(shadow["out"]), side_by_side=side)
+    plan = timeline_render.plan(snap, frame, frame + 1)
+    floor = float(job.params.get("min_psnr", 30))
+    result = {"ok": (cmp["psnr"] or 0) >= floor, "frame": frame, **got, **cmp, "min_psnr": floor,
+              "px_per_unit": t.get("px_per_unit") or timeline_render.UNIT,
+              "suspects": framecheck.suspects(plan, cmp["diff_box"]), "not_drawn": shadow["skipped"],
+              "image": "Resolve | shadow render | difference ×4"}
+    if side.exists():
+        job.output(side, kind="image", meta=result)
+    return result
+
+
+@ext.command("resolve.calibrate")
+def calibrate(job):
+    """Crop/Pan/Tilt px per unit for the open timeline's resolution, measured on Resolve's own frame: the
+    candidate whose shadow render matches it best. Read-only (nothing is set on any clip); stored in
+    ~/.pointman-resolve/calibration.json, and later snapshots carry it as timeline.px_per_unit."""
+    def pick(snap):
+        if job.params.get("frame") is not None:
+            return frame_of_param(job)(snap)
+        f = framecheck.probe_frame(snap)
+        if f is None:
+            raise RuntimeError(f"no visible clip is moved or cropped by {framecheck.MOVED:.0f}+ units: pass a `frame`")
+        return f
+    snap, frame, got, png = grab_frame(job, pick)
+    result = framecheck.calibrate(snap, frame, png, Path(job.work))
+    result.update(frame=frame, **got)
+    if result["ok"] and not job.params.get("dry_run"):
+        result["stored"] = str(framecheck.store(result, project=snap["project"]["name"],
+                                                timeline=snap["timeline"]["name"], frame=frame))
+    best = Path(job.work) / f"shadow-u{result.get('px_per_unit')}.png"
+    side = Path(job.work) / "calibrate.png"
+    if best.exists():
+        framecheck.compare(png, best, side_by_side=side)
+        if side.exists():
+            job.output(side, kind="image", meta=result)
+    return result
 
 
 @ext.method("health.check")

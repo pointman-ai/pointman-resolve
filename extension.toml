@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.5.0"
+version = "0.6.0"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
@@ -112,6 +112,22 @@ kind = "resolve.check"
 title = "Check a snapshot against its OTIO"
 params = { type = "object", properties = { timeline = { type = "string" }, snapshot = { type = "string", description = "The snapshot's file name; the latest if left out." } }, additionalProperties = false }
 
+[[commands]]
+kind = "resolve.frame_check"
+title = "Check a frame in Resolve against the shadow render"
+params = { type = "object", required = ["frame"], properties = { frame = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, min_psnr = { type = "number", default = 30 }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still before the playhead is moved." } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+outputs = ["image"]
+
+[[commands]]
+kind = "resolve.calibrate"
+title = "Measure Crop/Pan/Tilt px per unit"
+params = { type = "object", properties = { frame = { type = ["string", "integer"], description = "A frame with a moved or cropped clip; picked from the timeline if left out." }, dry_run = { type = "boolean", default = false }, wait = { type = "number", default = 3 } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+outputs = ["image"]
+
 [[tools]]
 name = "resolve_render"
 command = "resolve.render"
@@ -160,3 +176,15 @@ description = "connected (and why not), Resolve's version, the page, the open pr
 [[files]]
 extensions = [".drp"]
 open_with = "DaVinci Resolve"
+
+[[tools]]
+name = "resolve_frame_check"
+command = "resolve.frame_check"
+description = "After changing position, zoom, crop, colour or a transition: Resolve's own picture of one timeline frame against the shadow render of it, with the PSNR, the box where they differ, and the clips there (with their Zoom/Pan/Tilt/crops). Moves the playhead only once the timeline has been still for `wait` seconds, and puts it back; while someone is working it retries later. Returns an image: Resolve | shadow | difference."
+returns = "result"
+
+[[tools]]
+name = "resolve_calibrate"
+command = "resolve.calibrate"
+description = "Measure how many pixels one Crop/Pan/Tilt unit is at this timeline's resolution (2 on 1920x1080), from Resolve's own frame: the candidate whose shadow render matches best. Read-only on the timeline (it moves the playhead the same guarded way as resolve_frame_check). Stored per resolution; later snapshots carry it as timeline.px_per_unit."
+returns = "result"

@@ -21,6 +21,12 @@ and `CHANGELOG.md` describe 21.x. README.txt is from 2024 and misses things like
 - `GetUniqueId()` survives ripples, trims, restarts and the head of a razor cut. Use it to find your clips
   again after the person edits; positions move.
 - `ImportTimelineFromFile` switches the current timeline. Don't call it on someone's open project.
+- `AppendToTimeline` only places on the current timeline: there's no way to add to another one without
+  switching to it.
+- On 25 fps sources, `GetSourceStartFrame()` is a frame off on about a quarter of items. Use `GetLeftOffset()`
+  there, and `GetSourceStartFrame()` only for faster sources (60 fps screen recordings).
+- Connecting to Resolve resets the process's locale to C, so open every file with `encoding="utf-8"`.
+  Non-ASCII names broke a check that relied on the default.
 
 ## Units and looks
 

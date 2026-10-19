@@ -5,8 +5,9 @@ Read-only (see resolve.ReadOnly). ~20 calls per item at ~0.1 ms each: about 3 s 
 
 Units, as measured in PFE-9 (Resolve 21.1):
 - record, frames, in: timeline frames. `in` is GetLeftOffset, the in-point counted in timeline frames
-  from the start of the file. It's the one to trust: GetSourceStartFrame is a frame off on ~25% of
-  items, even 25 fps ones (kept as `src_frame` for reference only).
+  from the start of the file; it matched Resolve's OTIO on every item. `src_frame` (GetSourceStartFrame)
+  is in the media's own frames: the exact start for re-placing 60 fps clips, but a frame off `in` on
+  ~40% of 25 fps clips, so trust `in` for those.
 - src_start: GetSourceStartTime, seconds on the media's own timecode (C0030 starts at 4843.68 s),
   sub-frame for 60 fps media.
 - props: GetProperties as Resolve gives them: Pan, Tilt and crops in output pixels, Zoom 1.0 = fit.

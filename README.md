@@ -51,7 +51,7 @@ Each item:
 | `frames` | `GetDuration` | timeline frames |
 | `in` | `GetLeftOffset` | in-point, timeline frames from the file start: **the one to trust** |
 | `src_start` | `GetSourceStartTime` | seconds on the media's own timecode (C0030 starts at 4843.68 s) |
-| `src_frame` | `GetSourceStartFrame` | for reference only: a frame off `in` on ~25% of items |
+| `src_frame` | `GetSourceStartFrame` | source frame at the media's own rate. For 60 fps media it's the exact start to re-place a clip (AppendToTimeline takes source frames). On 25 fps clips it's a frame off `in` on ~40% of items, and `in` matched OTIO every time: trust `in` there |
 | `media_fps`, `file`, `media_id` | media pool item | `null` for transitions and generators |
 | `name`, `type` | `GetName`, `GetType` | type `video` / `audio` / `transition` / `generator` |
 | `props` | `GetProperties` | Pan, Tilt, crops in output pixels; Zoom 1.0 = fit; audio: AudioVolume dB, AudioPan… |

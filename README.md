@@ -88,6 +88,18 @@ under it, and a still of that frame. The still is drawn from the source files by
   alone a marker you've edited since it was posted.
 - Turn it off with the `marker_calls` setting.
 
+## Guidance for agents
+
+[SKILLS.md](SKILLS.md) goes into the prompt of every agent woken on a machine where this extension is on
+(Pointman release 9 or later). It covers editing a person's timeline:
+- their call, and don't move their playhead while they edit;
+- check every change in Resolve's own frames;
+- keep the timeline clean, and colour clips by block type;
+- treat a look they set by hand as the reference;
+- markers are requests: don't ask back.
+
+[skills/resolve-rules.md](skills/resolve-rules.md) has the API details behind each rule.
+
 ## The timeline as data
 
 `resolve.snapshot`, `resolve.diff` and `resolve.check` (`pointman_resolve/timeline/`) give agents the edit as

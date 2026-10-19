@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.4.1"
+version = "0.5.0"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
@@ -14,6 +14,14 @@ platforms = ["macos-arm64", "macos-x86_64"]
 [run]
 command = ["python", "-m", "pointman_resolve"]
 runtime = "python3.12"
+
+# Guidance for every agent woken on a machine where this extension is on: how to edit a person's Resolve
+# timeline (their call, check in Resolve's own frames, keep it clean, colour by block type). Needs Pointman
+# release 9 or later (a node extension carrying a [behavior]).
+[behavior]
+skill = "SKILLS.md"
+clients = ["claude", "codex", "gemini"]
+files = ["skills"]
 
 [detect]
 macos = ["/Applications/DaVinci Resolve/DaVinci Resolve.app"]

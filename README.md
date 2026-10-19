@@ -123,7 +123,8 @@ A plan is a list of ops on item ids from a snapshot, frames counted from the tim
 | `join` | `items` | a through-edit (same file running on frame for frame) into one clip |
 | `cut` | `ranges`, `fill` | ripple-deletes each `[s, e)` across every track, last first: clips crossing an edge are split, a track with nothing there gets `fill` (black, or silence, mono where the track is), and every later clip is checked to have moved by exactly `e - s` |
 
-An op on the person's own tracks (named camera, screen or voice) needs `ok`: what asked for it.
+An op on the person's own tracks (named camera, screen or voice) needs `ok`: what asked for it. `props` are
+Resolve's own values (`GetProperties` keys): Crop, Pan and Tilt in Resolve units, never pixels (see Units below).
 
 - **Dry run** (`resolve.plan`): the ops compile against a model of the timeline into remove and lay
   steps. It refuses what wouldn't survive a re-lay: linked clips, Fusion comps, retimed clips, clip

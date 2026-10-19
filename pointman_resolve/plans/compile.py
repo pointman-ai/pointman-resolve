@@ -26,6 +26,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from ..timeline import grades as grade_records
 from .model import Model, PlanError, clock, lane, same_frame
 
 OWN_TRACKS = ("camera", "screen", "voice")
@@ -385,12 +386,18 @@ def op_join(m: Model, op: dict, g: Group) -> None:
             why = f"there's a transition at {clock(b['record'], m.fps)}"
         if why:
             raise PlanError(f"can't join {m.name(key)} {a.get('name')}: {why}")
-    graded = [p for p in ps if (p.get("grade") or {}).get("graded")]
-    if graded and not op.get("same_grade"):
-        raise PlanError(f"{m.name(key)} {graded[0].get('name')} is graded, and Resolve can't read a grade's values (no "
-                        "GetCDL; ExportLUT only works on the Color page), so one clip with the first piece's grade could "
-                        "change how the others look. If you know they're the same (one CDL set on all of them by a tool), "
-                        "say how in \"same_grade\"")
+    graded = [p for p in ps if (p.get("grade") or {}).get("graded") or p.get("cdl")]
+    if graded:
+        cdls = [p.get("cdl") for p in ps]
+        if all(cdls):                                    # every piece's CDL is on record (grades.json, PFE-42)
+            if any(grade_records.parse(c) != grade_records.parse(cdls[0]) for c in cdls):
+                raise PlanError(f"can't join {m.name(key)} {ps[0].get('name')}: the CDLs our tools recorded for its "
+                                "pieces differ, so one clip would change how some of them look")
+        elif not op.get("same_grade"):
+            raise PlanError(f"{m.name(key)} {graded[0].get('name')} is graded, and Resolve can't read a grade's values "
+                            "(no GetCDL; ExportLUT only works on the Color page), and grades.json doesn't have every "
+                            "piece's CDL, so one clip with the first piece's grade could change how the others look. If "
+                            "you know they're the same (one CDL set on all of them by a tool), say how in \"same_grade\"")
     marked = [p for p in ps[1:] if p.get("markers")]
     if marked or ps[0].get("markers"):
         raise PlanError(f"{m.name(key)} {(marked or ps)[0].get('name')} has clip markers, which a join can't carry yet "

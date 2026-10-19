@@ -266,3 +266,27 @@ def test_graded_pieces_join_only_when_the_plan_says_their_grades_match(tmp_path)
     plan["ops"][0]["same_grade"] = "cutout_look.py set one CDL on every piece"
     snap, rec, _ = run(tl, plan, tmp_path)
     assert lanes(tl)["V1"] == [(0, 80, 100, "cut-alpha.mov")] and tl.tracks[("video", 1)][0].tools == {1: ["Primary Balance"]}
+
+
+def test_recorded_cdls_follow_a_relaid_clip_and_decide_joins(tmp_path):
+    from pointman_resolve.timeline import grades
+    cdl = {"Slope": "0.88 1.03 1.13", "Offset": "0 0 0", "Power": "1 1 1", "Saturation": "1"}
+    tl = sample()
+    tl.tracks[("video", 5)][0].tools = {1: ["Primary Balance"]}
+    grades.record("v5a", cdl, by="cutout_look.py")
+    plan = {"ops": [{"op": "slip", "items": ["v5a"], "by": 2}]}
+    snap, rec, _ = run(tl, plan, tmp_path)
+    new = tl.tracks[("video", 5)][0].uid
+    assert grades.load()[new]["cdl"]["Slope"] == "0.88 1.03 1.13" and "re-laid" in grades.load()[new]["by"]
+    A.undo(fake.Resolve(tl), snap, plan, rec, sleep=lambda s: None)
+    assert grades.load()[tl.tracks[("video", 5)][0].uid]["cdl"]["Slope"] == "0.88 1.03 1.13"
+
+    cut = fake.Media("/raw/cut-alpha.mov")
+    a, b = fake.Item("k1", 90000, 50, 100, cut), fake.Item("k2", 90050, 30, 150, cut)
+    a.tools = b.tools = {1: ["Primary Balance"]}
+    tl2 = fake.Timeline({("video", 1): [a, b]})
+    grades.record("k1", cdl, by="cutout_look.py")
+    grades.record("k2", cdl, by="cutout_look.py")
+    assert not compile_plan(snap_of(tl2), {"ops": [{"op": "join", "items": ["k1", "k2"]}]})["problems"]
+    grades.record("k2", {**cdl, "Slope": "0.9 1 1.1"}, by="by hand")
+    assert "recorded for its pieces differ" in compile_plan(snap_of(tl2), {"ops": [{"op": "join", "items": ["k1", "k2"]}]})["problems"][0]

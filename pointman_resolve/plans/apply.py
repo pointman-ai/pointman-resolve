@@ -27,6 +27,7 @@ import math
 import time
 from pathlib import Path
 
+from ..timeline import grades as grade_records
 from ..timeline import journal
 from .compile import compile_plan
 from .model import Model, clock, lane
@@ -375,11 +376,18 @@ class Runner:
             raise Stop(f"{len(todo)} clips didn't land where the plan puts them, e.g. {lane(q['kind'], q['track'])} "
                        f"{clock(q['record'], m.fps)} {q.get('name')}: resolve.undo puts back what was there")
         bad = []
+        recorded = grade_records.load()
         for q in g["lay"]:
             it = self.by_id((q["kind"], q["track"])).get(self.ids[q["id"]])
             bad += [f"{q.get('name')}: {b}" for b in self.restore(it, q)]
-            if q.get("grade_from") in stands and not stands[q["grade_from"]].CopyGrades([it]):
-                bad.append(f"{q.get('name')}: grade")
+            if q.get("grade_from") in stands:
+                if not stands[q["grade_from"]].CopyGrades([it]):
+                    bad.append(f"{q.get('name')}: grade")
+                else:                                   # the CDL our tools recorded goes with the grade (PFE-42)
+                    was = recorded.get(self.real(q["grade_from"]))
+                    if was:
+                        grade_records.record(self.ids[q["id"]], was["cdl"], by=f"{was.get('by')} (re-laid by "
+                                             f"{self.rec.data.get('plan')})")
         if bad:
             self.rec.data["warnings"].append("Resolve refused some settings: " + "; ".join(bad[:10]))
             self.rec.save()

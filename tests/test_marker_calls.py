@@ -172,7 +172,8 @@ def test_marker_done_turns_it_green_where_posts_cant_be_read(node_refusing):
 def test_a_tick_from_the_agent_turns_it_green_where_posts_can_be_read(node_reading):
     n = node_reading
     assert until(lambda: n.published)
-    assert "React ✅" in n.published[0]["post"]["text"]
+    # no post of ours to ask about yet, so the first one says marker_done; polling settles it after
+    assert "resolve.marker_done" in n.published[0]["post"]["text"]
     assert until(lambda: n.marker(300)["color"] == "Cyan")
     n.ticked = True                                               # @editor reacts ✅
     assert until(lambda: n.marker(300)["color"] == "Green"), "the ✅ didn't turn it green"

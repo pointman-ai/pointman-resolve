@@ -414,9 +414,13 @@ def reactions_of(post: int) -> list | None:
 
 
 def ticks_count() -> bool:
-    """Whether a ✅ on the post will turn the marker green: asked of the node once (any id will do)."""
+    """Whether a ✅ on the post will turn the marker green. The node may only let us read posts we made,
+    so it's asked about one of ours; with none yet, the post says resolve.marker_done (the first poll of
+    a real post settles it for the next ones)."""
     if marks["read_posts"] is None:
-        reactions_of(0)
+        ours = [v["post"] for v in marker_state().data.values() if v.get("post")]
+        if ours:
+            reactions_of(max(ours))
     return bool(marks["read_posts"])
 
 

@@ -29,5 +29,6 @@ description: How an agent edits alongside a person in their DaVinci Resolve time
 **A look the person sets by hand is the reference.** Copy their exact values from that clip to every clip of the same kind. Judge "same kind" from each clip's first, middle and last frames, never one frame.
 
 **Markers.** A marker that calls you is a request. Do it, check it, reply in the thread, then mark it done: react ✅, or call `resolve.marker_done`.
+- **Don't ask back.** Someone who leaves notes as markers is heads down in Resolve and may not see a question for an hour. Make the call yourself, keep it undoable, and report what you did, why, and how to undo it. Ask only when no choice is safe to undo.
 
 More, with the API details: [skills/resolve-rules.md](skills/resolve-rules.md).

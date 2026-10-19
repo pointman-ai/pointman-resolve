@@ -5,9 +5,9 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.2.1"
+version = "0.3.0"
 publisher = "aurelio"
-summary = "Preview renders and stills of your Resolve timelines, and board notes as timeline markers."
+summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, and the timeline as data for agents."
 node = ">=0.1,<1"
 platforms = ["macos-arm64", "macos-x86_64"]
 
@@ -69,6 +69,23 @@ params = { type = "object", required = ["note", "project", "timeline"], properti
 lane = "resolve"
 ready_when = "connected"
 
+[[commands]]
+kind = "resolve.snapshot"
+title = "Snapshot the timeline"
+params = { type = "object", properties = { otio = { type = "boolean", default = true, description = "Also save Resolve's OTIO export of the timeline beside it." } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
+kind = "resolve.diff"
+title = "Compare two timeline snapshots"
+params = { type = "object", properties = { timeline = { type = "string", description = "The timeline's name; the one snapshotted last if left out." }, a = { type = "string", description = "The earlier snapshot's file name (snapshot-<utc>.json); the one before b if left out." }, b = { type = "string", description = "The later snapshot's file name; the latest if left out." }, full = { type = "boolean", default = false, description = "Every entry, rather than the first 50 of each list." } }, additionalProperties = false }
+
+[[commands]]
+kind = "resolve.check"
+title = "Check a snapshot against its OTIO"
+params = { type = "object", properties = { timeline = { type = "string" }, snapshot = { type = "string", description = "The snapshot's file name; the latest if left out." } }, additionalProperties = false }
+
 [[tools]]
 name = "resolve_render"
 command = "resolve.render"
@@ -78,6 +95,24 @@ description = "Render a Resolve timeline (the open one, or one by name) to a sma
 name = "resolve_still"
 command = "resolve.still"
 description = "Grab the frame under Resolve's playhead as a PNG and post it."
+returns = "result"
+
+[[tools]]
+name = "resolve_snapshot"
+command = "resolve.snapshot"
+description = "Read the timeline open in Resolve, without changing anything: every track, item (place, length, in-point, source, transform, fades, speed, grade nodes), marker, and our own edits since the last snapshot, saved as snapshot-<utc>.json with Resolve's OTIO export beside it. Returns the files' paths and counts. Takes a few seconds."
+returns = "result"
+
+[[tools]]
+name = "resolve_diff"
+command = "resolve.diff"
+description = "What changed in a Resolve timeline between two snapshots (by default its latest two): items kept, changed, moved, trimmed, new (with the clip each was cut from) and gone, markers, and which changes were ours. Reads files only."
+returns = "result"
+
+[[tools]]
+name = "resolve_check"
+command = "resolve.check"
+description = "Check a timeline snapshot (by default the latest) against the OTIO export taken with it, item by item: place, length, in-point, transforms, transitions and markers."
 returns = "result"
 
 [[events]]

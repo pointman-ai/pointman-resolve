@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.6.1"
+version = "0.6.2"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"

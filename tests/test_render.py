@@ -54,6 +54,11 @@ def test_geometry_matches_resolve(media):
     # moves it up 2 px per unit: y = 540 + 1.148·(0 − 540) − 2·12.78
     s = R.geometry(item("s", 4, 0, 25, media["screen"], props={"ZoomX": 1.1481481481, "Tilt": 12.7778}), 1920, 1080)
     assert [round(v) for v in s["rect"]] == [0, -106, 1920, 1240]
+    # the same screen as Spacesheep's half-window desktop: its Pan unit is 2·1672.26/1920 = 1.742 px, so Pan −9
+    # moves it 15.7 px, not 18, and it lands at x 93.0, where Resolve's own frame has it (frame_check, 2026-10-19)
+    h = R.geometry(item("h", 4, 0, 25, media["screen"], props={"ZoomX": 1.0181481790542601, "Pan": -9.0, "Tilt": 8.0,
+                                                               "CropTop": 14.0}), 1920, 1080)
+    assert round(h["rect"][0], 1) == 93.0 and round(h["rect"][1], 1) == 2.7
 
 
 def test_hidden_clips_are_not_decoded(media):

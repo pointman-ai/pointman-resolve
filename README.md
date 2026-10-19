@@ -103,7 +103,9 @@ data, so they can follow it without watching your screen.
   `ours` lists what our own tools did, from `~/.pointman-resolve/journal.jsonl`.
 - **Units** (Resolve 21.1): `in` is `GetLeftOffset`, the in-point in timeline frames, and it matched
   Resolve's OTIO on every item. `src_start` is seconds on the media's own timecode. Pan, tilt and crops
-  are in output pixels (OTIO stores them as a fraction of half the frame).
+  are in Resolve's units, not pixels: one unit is 2 px on a 1920x1080 timeline (measured against
+  Resolve's own stills; other sizes aren't yet). OTIO stores them as a fraction of the whole frame: Pan and
+  CropLeft/Right ÷ 960 units (= ÷ width), Tilt and CropTop/Bottom ÷ 540 (= ÷ height).
 - From a shell: `python -m pointman_resolve.timeline.cli snapshot | diff A B | check S`.
 
 ## Status

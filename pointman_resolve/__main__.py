@@ -378,6 +378,19 @@ def grab_frame(job, frame_of) -> tuple[dict, int, dict, Path]:
     return snap, frame, got, png
 
 
+def post_image(job, path: Path, meta: dict, snap: dict, *, what: str, caption: str) -> dict:
+    """The comparison image, posted where the board's request asked (as resolve.still posts its frame), or
+    handed back as the command's output by a node that doesn't publish for extensions."""
+    if not publishes():
+        job.output(path, kind="image", meta=meta)
+        return {}
+    project, timeline = snap["project"]["name"], snap["timeline"]["name"]
+    build = media.build_image(path, Path(tempfile.mkdtemp(dir=job.work)), lambda stage, f: None)
+    build.meta.update({k: v for k, v in meta.items() if k in ("frame", "timecode", "psnr", "px_per_unit", "ok")})
+    return publish(build, project=project_for(project), asset_path=f"resolve/{project}/{timeline}/{what.replace(' ', '-')}",
+                   title=f"{timeline} {what}", caption=caption, post=posted_for(job))
+
+
 def restored_warning(got: dict) -> dict:
     """First in the result when the playhead didn't go back: the one thing the person would notice."""
     if got.get("restored"):
@@ -408,7 +421,9 @@ def frame_check(job):
               "suspects": framecheck.suspects(plan, cmp["diff_box"]), "not_drawn": shadow["skipped"],
               "image": "Resolve | shadow render | difference ×4"}
     if side.exists():
-        job.output(side, kind="image", meta=result)
+        result["posted"] = post_image(job, side, result, snap, what="frame check", caption=(
+            f"Frame check at {got['timecode']}: Resolve | shadow render | difference. PSNR {cmp['psnr']} dB"
+            + (f", differs in {cmp['diff_box']}" if cmp["diff_box"] else "")))
     return result
 
 
@@ -437,7 +452,9 @@ def calibrate(job):
     if best.exists():
         framecheck.compare(png, best, side_by_side=side)
         if side.exists():
-            job.output(side, kind="image", meta=result)
+            result["posted"] = post_image(job, side, result, snap, what="calibration", caption=(
+                f"Calibration at {got['timecode']}: {result.get('px_per_unit')} px per unit "
+                f"({result.get('psnr')} dB, {result.get('margin_db')} dB clear). Resolve | shadow | difference"))
     return result
 
 

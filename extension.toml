@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.6.0"
+version = "0.6.1"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
@@ -115,7 +115,7 @@ params = { type = "object", properties = { timeline = { type = "string" }, snaps
 [[commands]]
 kind = "resolve.frame_check"
 title = "Check a frame in Resolve against the shadow render"
-params = { type = "object", required = ["frame"], properties = { frame = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, min_psnr = { type = "number", default = 30 }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still before the playhead is moved." } }, additionalProperties = false }
+params = { type = "object", required = ["frame"], properties = { frame = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, min_psnr = { type = "number", default = 30 }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still before the playhead is moved." }, thread_id = { type = "integer", description = "Post the comparison image in this thread." } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 outputs = ["image"]
@@ -123,7 +123,7 @@ outputs = ["image"]
 [[commands]]
 kind = "resolve.calibrate"
 title = "Measure Crop/Pan/Tilt px per unit"
-params = { type = "object", properties = { frame = { type = ["string", "integer"], description = "A frame with a moved or cropped clip; picked from the timeline if left out." }, dry_run = { type = "boolean", default = false }, wait = { type = "number", default = 3 } }, additionalProperties = false }
+params = { type = "object", properties = { frame = { type = ["string", "integer"], description = "A frame with a moved or cropped clip; picked from the timeline if left out." }, dry_run = { type = "boolean", default = false }, wait = { type = "number", default = 3 }, thread_id = { type = "integer", description = "Post the comparison image in this thread." } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 outputs = ["image"]

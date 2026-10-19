@@ -97,4 +97,4 @@ def test_the_report_says_times_and_that_sound_is_an_estimate(monkeypatch):
          "sound": {"lufs": -15.8, "true_peak": -1.1, "target_lufs": -14.0, "estimate": qc.ESTIMATE},
          "issues": [{"check": "black", "at": 1512, "to": 1513, "what": "no video for 1 frames"}]}
     md = qc.markdown(r, "t")
-    assert "| 1:00.12 | black |" in md and "clip levels only" in md and "about -15.8 LUFS" in md
+    assert "| 1:00.48 | black |" in md and "clip levels only" in md and "about -15.8 LUFS" in md

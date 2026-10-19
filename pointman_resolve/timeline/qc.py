@@ -40,13 +40,6 @@ def tc(frame: int, fps: float) -> str:
     return f"{int(s // 60)}:{s % 60:05.2f}"
 
 
-def clock(frame: int, fps: float) -> str:
-    """m:ss.ff, read on a phone."""
-    f = int(frame)
-    n = round(fps)
-    return f"{f // n // 60}:{f // n % 60:02d}.{f % n:02d}"
-
-
 def _spans(frames: list[int]) -> list[tuple[int, int]]:
     out = []
     for f in sorted(frames):
@@ -257,5 +250,5 @@ def markdown(r: dict, title: str) -> str:
     if r["issues"]:
         lines += ["", "| At | Check | What |", "|---|---|---|"]
         fps = r.get("fps") or 25.0
-        lines += [f"| {clock(i['at'], fps)} | {i['check']} | {i['what']} |" for i in r["issues"][:200]]
+        lines += [f"| {tc(i['at'], fps)} | {i['check']} | {i['what']} |" for i in r["issues"][:200]]   # as marker posts write it
     return "\n".join(lines) + "\n"

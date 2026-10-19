@@ -32,6 +32,7 @@ TRIGGER = re.compile(r"^\s*@([A-Za-z0-9][A-Za-z0-9_.-]{0,31})(?![A-Za-z0-9_.-])"
 DEFAULT_NAMES = {"pm", "pointman"}          # "the project's agent"
 SKIP = ("dailies:", "pm:")                  # board notes mirrored as markers, and ours
 POSTED, DONE = "Cyan", "Green"
+CLAIM = "pm:claim-"                         # tagged before posting: the marker is ours however long the post takes
 DONE_EMOJI = ("✅", "white_check_mark", ":white_check_mark:")
 
 
@@ -332,6 +333,23 @@ class MarkerWriter:
                 return int(f), m
         return None
 
+    def claim(self, frame: int, expect: dict, custom: str) -> str:
+        """Tag the marker before it's posted (no delete, no colour): calls() skips it from then on, so a slow
+        post (a Wi-Fi drop) and James's edits meanwhile can't make it look new and post it twice, and
+        find() follows it wherever a ripple moves it. 'ok', 'gone', or 'failed: …'."""
+        now = (self.GetMarkers() or {}).get(frame) or (self.GetMarkers() or {}).get(float(frame))
+        if not now or (now.get("name"), now.get("note")) != (expect.get("name"), expect.get("note")) \
+                or now.get("customData"):
+            return "gone"
+        if not self.UpdateMarkerCustomData(frame, custom):
+            return "failed: Resolve wouldn't tag the marker"
+        return "ok"
+
+    def release(self, custom: str) -> bool:
+        """Untag a claimed marker whose post didn't go out, so the next round posts it."""
+        found = self.find(custom)
+        return bool(found) and bool(self.UpdateMarkerCustomData(found[0], ""))
+
     def mark(self, frame: int, expect: dict, color: str, custom: str) -> str:
         """Tag the marker at `frame` with `custom` and give it `color`, if it's still the one we posted
         (same name and note). 'ok', 'gone' (moved or edited: left alone), or 'failed: …'."""
@@ -352,6 +370,11 @@ class MarkerWriter:
         # 3. never lose James's marker: put it back as it was, tagged
         self.AddMarker(frame, now.get("color") or "Blue", name, note, duration, custom)
         return "failed: Resolve wouldn't add the recoloured marker back (restored as it was)"
+
+
+def claimed(markers: dict) -> list[tuple[int, dict]]:
+    """Markers tagged with a claim: posting, or posted and not yet given their post's tag."""
+    return [(int(float(f)), m) for f, m in (markers or {}).items() if str(m.get("customData") or "").startswith(CLAIM)]
 
 
 def done_by(reactions: list[dict], mention: str, people=("james",)) -> str | None:

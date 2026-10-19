@@ -83,8 +83,13 @@ under it, and a still of that frame. The still is drawn from the source files by
   **green** when the agent calls `resolve.marker_done` (tool `resolve_marker_done`). Where the node lets
   extensions read posts, a ✅ from that agent or from you does it too. The name and note are never
   changed.
-- **No loops:** markers with custom data `dailies:…` (board notes mirrored as markers) or `pm:…` (already
-  posted) are never picked up. Each marker is posted once, remembered in `~/.pointman-resolve/markers.json`,
+- **Claimed before it's posted:** a marker is tagged `pm:claim-<key>` before its post goes out, then given
+  `pm:<post id>` wherever it is by then. A slow post (a Wi-Fi drop) and your edits meanwhile can't make it look
+  new and post it twice, and a post that fails takes the claim off, so it's tried again.
+- **Colours heal:** a posted or done marker that's back at the colour it had before (an undo in Resolve takes
+  back our delete + add) gets cyan or green again. One you've given another colour is left alone.
+- **No loops:** markers with custom data `dailies:…` (board notes mirrored as markers) or `pm:…` (ours) are
+  never picked up. Each marker is posted once, remembered in `~/.pointman-resolve/markers.json`,
   even if tagging it in Resolve fails. At most three go out per 10 s round.
 - **The only write:** `markers.MarkerWriter` can only tag, delete and re-add a marker, the same kind of
   write `resolve.marker` makes. It tags first, so the marker is never posted twice. A colour change is

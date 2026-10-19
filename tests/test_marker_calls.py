@@ -29,11 +29,12 @@ def scriptapp(name):
 
 
 class Node:
-    def __init__(self, tmp: Path, read_posts: bool, project: str | None = None, home: dict | None = None):
+    def __init__(self, tmp: Path, read_posts: bool, project: str | None = None, home: dict | None = None,
+                 extra: str = ""):
         api = tmp / "api"
         (api / "Modules").mkdir(parents=True)
         rename = f"fake.Project.GetName = lambda self: {project!r}\n" if project else ""
-        (api / "Modules" / "DaVinciResolveScript.py").write_text(STANDIN + rename, encoding="utf-8")
+        (api / "Modules" / "DaVinciResolveScript.py").write_text(STANDIN + rename + extra, encoding="utf-8")
         (tmp / "Resolve.app").mkdir()
         (tmp / "fusionscript.so").write_text("")
         self.home = tmp / "home"
@@ -220,3 +221,53 @@ def test_a_renamed_project_keeps_its_route(tmp_path):
         assert until(lambda: json.loads((n.home / "fallback.json").read_text(encoding="utf-8"))["thread"] == 10399)
     finally:
         n.close()
+
+
+# James's ripple moves the marker while its post is out (a Wi-Fi drop made the post slow): marker 59
+MOVES_WHILE_POSTING = """
+_update = fake.Timeline.UpdateMarkerCustomData
+def _moving(self, frame, custom):
+    ok = _update(self, frame, custom)
+    if ok and custom.startswith("pm:claim-") and int(frame) == 300:
+        self.markers[200] = self.markers.pop(300)
+    return ok
+fake.Timeline.UpdateMarkerCustomData = _moving
+"""
+
+
+def test_a_marker_moved_while_its_post_is_out_is_posted_once(tmp_path):
+    n = start(tmp_path, read_posts=False, extra=MOVES_WHILE_POSTING)
+    try:
+        assert until(lambda: n.published), "nothing was posted"
+        assert until(lambda: n.marker(200)["color"] == "Cyan"), "not tagged where it moved to"
+        m = n.marker(200)
+        assert (m["custom"], m["name"]) == ("pm:777", "@editor this cut jumps")
+        time.sleep(1.5)                                           # a few more rounds
+        assert len(n.published) == 1, f"posted {len(n.published)} times"
+    finally:
+        n.close()
+
+
+# an undo in Resolve takes back our delete + add: the marker is tagged but back at its own colour
+UNDONE_ONCE = """
+_add = fake.Timeline.AddMarker
+_undone = []
+def _undo_first_cyan(self, frame, color, name, note, duration, custom=""):
+    if color == "Cyan" and not _undone:
+        _undone.append(frame)
+        return _add(self, frame, "Red", name, note, duration, custom)
+    return _add(self, frame, color, name, note, duration, custom)
+fake.Timeline.AddMarker = _undo_first_cyan
+"""
+
+
+def test_a_marker_back_at_its_own_colour_gets_ours_again(tmp_path):
+    n = start(tmp_path, read_posts=False, extra=UNDONE_ONCE)
+    try:
+        assert until(lambda: n.published)
+        assert until(lambda: n.marker(300)["color"] == "Cyan"), "the reverted colour wasn't healed"
+        assert n.marker(300)["custom"] == "pm:777" and len(n.published) == 1
+    finally:
+        n.close()
+
+

@@ -85,7 +85,28 @@ class Timeline(Obj):
     def GetIsTrackLocked(self, kind, i): return False
     def GetTrackSubType(self, kind, i): return "stereo" if kind == "audio" else ""
     def GetItemListInTrack(self, kind, i): return list(self.tracks.get((kind, i), []))
-    def GetMarkers(self): return dict(self.markers)
+    def GetMarkers(self): return {float(f): dict(m) for f, m in self.markers.items()}  # Resolve keys are floats
+
+    # marker writes, for markers.MarkerWriter (fail_add makes AddMarker refuse, to test the restore)
+    fail_add = 0
+
+    def UpdateMarkerCustomData(self, frame, custom):
+        if int(frame) not in self.markers:
+            return False
+        self.markers[int(frame)]["customData"] = custom
+        return True
+
+    def DeleteMarkerAtFrame(self, frame):
+        return self.markers.pop(int(frame), None) is not None
+
+    def AddMarker(self, frame, color, name, note, duration, custom=""):
+        if self.fail_add > 0:
+            self.fail_add -= 1
+            return False
+        if int(frame) in self.markers:
+            return False
+        self.markers[int(frame)] = {"color": color, "name": name, "note": note, "duration": duration, "customData": custom}
+        return True
 
     def DeleteClips(self, *a):
         raise AssertionError("DeleteClips reached Resolve")

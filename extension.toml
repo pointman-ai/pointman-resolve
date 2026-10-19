@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.6.2"
+version = "0.6.3"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
@@ -113,6 +113,15 @@ title = "Check a snapshot against its OTIO"
 params = { type = "object", properties = { timeline = { type = "string" }, snapshot = { type = "string", description = "The snapshot's file name; the latest if left out." } }, additionalProperties = false }
 
 [[commands]]
+kind = "resolve.shadow"
+title = "Shadow-render a range"
+params = { type = "object", required = ["from", "to"], properties = { from = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, to = { type = ["string", "integer"] }, width = { type = "integer", minimum = 320, maximum = 1920, default = 960 }, thread_id = { type = "integer", description = "Post the video in this thread." } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+cancellable = true
+outputs = ["video"]
+
+[[commands]]
 kind = "resolve.frame_check"
 title = "Check a frame in Resolve against the shadow render"
 params = { type = "object", required = ["frame"], properties = { frame = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, min_psnr = { type = "number", default = 30 }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still before the playhead is moved." }, thread_id = { type = "integer", description = "Post the comparison image in this thread." } }, additionalProperties = false }
@@ -187,4 +196,10 @@ returns = "result"
 name = "resolve_calibrate"
 command = "resolve.calibrate"
 description = "Measure how many pixels one Crop/Pan/Tilt unit is at this timeline's resolution (2 on 1920x1080), from Resolve's own frame: the candidate whose shadow render matches best. Read-only on the timeline (it moves the playhead the same guarded way as resolve_frame_check). Stored per resolution; later snapshots carry it as timeline.px_per_unit."
+returns = "result"
+
+[[tools]]
+name = "resolve_shadow"
+command = "resolve.shadow"
+description = "Watch any range of the open Resolve timeline (up to 3 min a request; it takes about a third of real time and holds up marker posts meanwhile) without touching Resolve: every track composited from the source files and the audio mixed, posted as a video. The playhead and page don't move, so it's safe while someone edits. Grades, transitions, speed changes and titles aren't drawn yet (listed in not_drawn): for those, check with resolve_frame_check."
 returns = "result"

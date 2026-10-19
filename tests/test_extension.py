@@ -133,6 +133,13 @@ def test_snapshot_waits_while_resolve_is_away(node):
     assert state == "failed" and result["retry"] is True and "installed" in result["error"]
 
 
+def test_shadow_and_frame_checks_wait_while_resolve_is_away(node):
+    for i, (kind, params) in enumerate((("resolve.shadow", {"from": "1:00", "to": "1:10"}),
+                                        ("resolve.frame_check", {"frame": 100}), ("resolve.calibrate", {}))):
+        state, result = node.command(kind, params, f"w{i}")
+        assert state == "failed" and result["retry"] is True and "installed" in result["error"], (kind, result)
+
+
 def test_health_says_resolve_is_stopped(node):
     for _ in range(40):  # until the lane's first resolve.status has run
         rid = node.send("health.check", {})

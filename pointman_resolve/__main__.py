@@ -402,6 +402,53 @@ def frame_of_param(job):
     return lambda snap: timeline_render.parse_time(job.params["frame"], snap["timeline"]["fps"] or 25.0)
 
 
+SHADOW_MAX_S = 180   # holds the resolve lane (markers, status) while it renders: 3 min a request, about 75 s
+
+
+@ext.command("resolve.shadow")
+def shadow(job):
+    """Any range of the open timeline drawn from the source files (PFE-15): every track composited by ffmpeg,
+    with the audio mixed, posted as a video. No Resolve render, and the playhead and page don't move, so it
+    can run while the person edits. What it can't draw yet (grades, transitions, speed, titles) is listed."""
+    p = job.params
+    try:
+        resolve = bridge.connect()
+    except ResolveUnavailable as e:
+        raise unavailable(e) from None
+    snap = live_snapshot(resolve)
+    fps = snap["timeline"]["fps"] or 25.0
+    a, b = timeline_render.parse_time(p["from"], fps), timeline_render.parse_time(p["to"], fps)
+    if not 0 <= a < b:
+        raise ValueError(f"`from` must come before `to` ({a} → {b})")
+    if (b - a) / fps > SHADOW_MAX_S:
+        raise ValueError(f"{(b - a) / fps:.0f} s is more than {SHADOW_MAX_S} s: render it in parts")
+    check_disk(Path(job.work))
+    out = Path(job.work) / "shadow.mp4"
+    r = timeline_render.render(snap, a, b, out, width=int(p.get("width") or 960))
+    if not r["ok"]:
+        raise RuntimeError(f"the shadow render failed: {r['error']}")
+    result = {k: r[k] for k in ("from", "to", "seconds", "video_clips", "audio_clips", "hidden")}
+    # grades are never drawn yet (PFE-42); the rest is what this range has that the renderer skipped
+    result["not_drawn"] = ["grades"] + sorted({s["why"] for s in r["skipped"]})
+    project, timeline = snap["project"]["name"], snap["timeline"]["name"]
+    if not publishes():
+        job.output(out, kind="video", meta=result)
+        return result
+    try:
+        build = media.build_video(out, Path(tempfile.mkdtemp(dir=job.work)), lambda stage, f: None, height=540,
+                                  bitrate="1500k", name=f"{timeline}-shadow.mp4")
+        build.meta.update(result)
+        tc = lambda f: f"{int(f // fps // 60)}:{int(f // fps % 60):02d}"
+        published = publish(build, project=project_for(project), asset_path=f"resolve/{project}/{timeline}/shadow",
+                            title=f"{timeline} shadow {tc(a)}–{tc(b)}",
+                            caption=f"Shadow render {tc(a)}–{tc(b)}, drawn from the sources"
+                                    + f" (not drawn: {', '.join(result['not_drawn'])})",
+                            post=posted_for(job))
+    finally:
+        emptied(job.work)
+    return {**published, **result}
+
+
 @ext.command("resolve.frame_check")
 def frame_check(job):
     """Resolve's own picture of one frame against the shadow render of it: PSNR, where they differ, and the

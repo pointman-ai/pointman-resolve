@@ -3,6 +3,9 @@
     pointman-resolve snapshot [--out DIR] [--no-otio]   the open timeline -> DIR/snapshot-<utc>.json (+ .otio)
     pointman-resolve diff A.json B.json [--out FILE]    what changed from A to B, as JSON
     pointman-resolve check SNAPSHOT.json                the snapshot against its own OTIO, item by item
+    pointman-resolve render SNAPSHOT.json --from T --to T [--width 960] [--out FILE]
+                                                        that range composited from the sources (ffmpeg)
+    pointman-resolve render SNAPSHOT.json --still T [--out FILE.png]   one frame
 
 Without --out, snapshots go to ~/.pointman-resolve/snapshots/<project>/<timeline>/. Each command
 prints one JSON object on stdout. Read-only against Resolve: no saves, no switches, no edits.
@@ -56,6 +59,21 @@ def cmd_check(args) -> dict:
     return check(Path(args.snapshot))
 
 
+def cmd_render(args) -> dict:
+    from .render import parse_time, render
+    snap = json.loads(Path(args.snapshot).read_text(encoding="utf-8"))
+    fps = snap["timeline"]["fps"]
+    if args.still is not None:
+        start = parse_time(args.still, fps)
+        out = Path(args.out or f"still-{start}.png").expanduser()
+        return render(snap, start, start + 1, out, width=args.width, still=True)
+    start, end = parse_time(args.frm, fps), parse_time(args.to, fps)
+    if end <= start:
+        raise SystemExit("--to must be after --from")
+    out = Path(args.out or f"render-{start}-{end}.mp4").expanduser()
+    return render(snap, start, end, out, width=args.width)
+
+
 def run(argv=None) -> tuple[int, dict]:
     """Parse and run one command: (exit code, result)."""
     p = argparse.ArgumentParser(prog="pointman-resolve", description=__doc__.split("\n")[0])
@@ -70,10 +88,17 @@ def run(argv=None) -> tuple[int, dict]:
     d.add_argument("--no-local-journal", action="store_true", help="use only the journal embedded in B")
     c = sub.add_parser("check", help="a snapshot against its own OTIO export")
     c.add_argument("snapshot")
+    r = sub.add_parser("render", help="a range of a snapshot, composited from the source files (no Resolve)")
+    r.add_argument("snapshot")
+    r.add_argument("--from", dest="frm", default="0", help="start: mm:ss.xx, seconds (12.5s) or a frame")
+    r.add_argument("--to", default=None, help="end, same forms")
+    r.add_argument("--still", default=None, help="one frame at this time, as a PNG")
+    r.add_argument("--width", type=int, default=960)
+    r.add_argument("--out")
     args = p.parse_args(argv)
     try:
-        result = {"snapshot": cmd_snapshot, "diff": cmd_diff, "check": cmd_check}[args.cmd](args)
-        return (1 if args.cmd == "check" and not result.get("ok") else 0), result
+        result = {"snapshot": cmd_snapshot, "diff": cmd_diff, "check": cmd_check, "render": cmd_render}[args.cmd](args)
+        return (1 if args.cmd in ("check", "render") and not result.get("ok") else 0), result
     except SystemExit as e:
         return 2, {"error": str(e)}
     except Exception as e:  # report as JSON; callers parse stdout

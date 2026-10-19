@@ -65,8 +65,13 @@ under it, and a still of that frame. The still is drawn from the source files by
 `timeline/render.py`, so your playhead and page don't move.
 
 - **Where:** `~/.pointman-resolve/routes.toml` maps each Resolve project to a board thread and to the
-  agent `@pm` means there. A project that isn't listed goes to the `[unmapped]` thread or channel,
-  mentioning you. If neither is set, its markers wait.
+  agent `@pm` means there. A project you rename in Resolve keeps its route: it's known by its project
+  and timeline IDs (`projects.json`).
+- **No route:** a project that isn't listed posts to the **fallback**, and the post says so: the thread
+  and agent of the last marker posted from a routed project on this machine. An agent moves it with
+  `resolve.set_fallback` (tool `resolve_set_fallback`; it's kept in `fallback.json`). On a machine with
+  no fallback yet, it starts from the last marker in `markers.json`. If there isn't one, those markers
+  wait, untouched, until a routed project posts one or an agent sets the fallback.
 - **Who:** `agents` in the same file lists the handles a marker may call (the extension can't ask the
   board who exists). A handle that isn't listed, like a typo, goes to the project's agent with a note
   that it wasn't recognised.

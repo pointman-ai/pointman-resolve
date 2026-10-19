@@ -2,9 +2,11 @@
 
 A timeline marker whose name or note starts with `@pm`, `@pointman` or `@<handle>` becomes a post on
 the board: in the thread the project is routed to (~/.pointman-resolve/routes.toml), mentioning that
-handle, or the project's agent for @pm / @pointman. A project with no route starts a thread in the
-`unmapped` channel, mentioning James (an extension can't open a DM through the node). The post has the marker's timecode and note, the clips under it, and a still of that frame drawn from the
-source files (timeline/render.py, never by Resolve).
+handle, or the project's agent for @pm / @pointman. A project with no route posts to the fallback:
+the thread and agent of the last marker posted on this machine, which an agent can change
+(resolve.set_fallback), and the post says it came there. A renamed project (the same project or
+timeline ID as a routed one) keeps its route. The post has the marker's timecode and note, the clips
+under it, and a still of that frame drawn from the source files (timeline/render.py, never by Resolve).
 
 Once it's posted, the marker turns cyan and its custom data becomes `pm:<post id>`. It turns green when
 the agent calls resolve.marker_done, or, where the node lets the extension read posts, when the post gets
@@ -19,6 +21,7 @@ marker: the same kind of write resolve.marker already makes.
 import hashlib
 import json
 import re
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,16 +79,13 @@ def routes_path() -> Path:
 
 EXAMPLE_ROUTES = """\
 # Where Resolve markers that call an agent (@pm, @pointman, @<handle>) are posted, by Resolve project.
-# A project that isn't listed starts a thread in [unmapped]'s channel, mentioning `person` (no channel
-# set: those markers wait, and resolve.status says so).
+# A project that isn't listed posts to the fallback: the thread and agent of the last marker posted on
+# this machine (fallback.json beside this file; an agent moves it with resolve.set_fallback). A project
+# renamed in Resolve keeps its route: it's known by its project and timeline IDs.
 person = "james"
 # The handles a marker may call. One that isn't here goes to the project's agent, with a note that
 # it wasn't recognised (an extension can't ask the board who exists). Leave it out to trust any handle.
 agents = ["editor", "james", "rtx-render", "sheepgfx", "thumbs", "scene", "camgrab", "resolvedoc", "patchbay"]
-
-[unmapped]
-# thread = 123       # a board thread to post in, or
-# channel = 123      # a board channel to start a thread in
 
 [projects."feat-flow-with-spacesheep"]
 thread = 10399        # the board thread
@@ -100,10 +100,11 @@ def load_routes(path: Path | None = None) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def route(routes: dict, project: str, handle: str | None) -> dict:
-    """{thread, channel, mention, unknown}: a reply in the project's `thread`, or a new thread in the
-    unmapped `channel`, mentioning `mention`. Neither: nowhere to post yet. A handle that isn't in
-    `agents` goes to the project's agent instead, and comes back as `unknown`."""
+def route(routes: dict, project: str, handle: str | None, fallback: dict | None = None) -> dict:
+    """{thread, mention, unknown, routed, agent}: a reply in the project's `thread`, or, for a project
+    with no route (`routed` False), in the `fallback`'s; no thread: nowhere to post yet. `mention`: the
+    handle called, else `agent` (who @pm means there). A handle that isn't in `agents` goes to `agent`
+    instead, and comes back as `unknown`."""
     p = (routes.get("projects") or {}).get(project) or {}
     person = routes.get("person") or "james"
     agents = {str(a).lower().lstrip("@") for a in routes["agents"]} if routes.get("agents") else None
@@ -111,12 +112,13 @@ def route(routes: dict, project: str, handle: str | None) -> dict:
     if handle and agents is not None and handle not in agents and handle != person:
         unknown, handle = handle, None
     if p.get("thread"):
-        return {"thread": int(p["thread"]), "channel": None, "mention": handle or p.get("agent") or person,
-                "unknown": unknown}
-    un = routes.get("unmapped") or {}
-    return {"thread": int(un["thread"]) if un.get("thread") else None,
-            "channel": int(un["channel"]) if un.get("channel") and not un.get("thread") else None,
-            "mention": handle or person, "unknown": unknown}
+        agent = p.get("agent") or person
+        return {"thread": int(p["thread"]), "mention": handle or agent, "unknown": unknown, "routed": True,
+                "agent": agent}
+    fb = fallback or {}
+    agent = fb.get("agent") or person
+    return {"thread": int(fb["thread"]) if fb.get("thread") else None, "mention": handle or agent,
+            "unknown": unknown, "routed": False, "agent": agent}
 
 
 # ------------------------------------------------------------ the post
@@ -155,7 +157,7 @@ def under(snap: dict, frame: int) -> list[str]:
 
 
 def compose(call: Call, snap: dict, mention: str, machine: str | None = None, *, ticks: bool = False,
-            unknown: str | None = None) -> str:
+            unknown: str | None = None, fallback: bool = False, renamed: tuple[str, str] | None = None) -> str:
     """The post: who it's for, where it is, what James wrote, what's under it, and how to say it's done."""
     tl = snap["timeline"]
     tc = timecode(call.frame, tl.get("fps") or 25, tl.get("start_timecode"))
@@ -164,6 +166,14 @@ def compose(call: Call, snap: dict, mention: str, machine: str | None = None, *,
     lines += ["> " + line for line in (call.text or "(no note)").splitlines()]
     if unknown:  # in backticks, so the board doesn't take it as a mention
         lines.append(f"\n_The marker calls `@{unknown}`, which I didn't recognise, so it's here for @{mention}._")
+    on = f" on {machine}" if machine else ""
+    if fallback:
+        lines.append(f"\n_Project “{snap['project']['name']}” has no route, so it came to this thread (the fallback, "
+                     f"where the last marker went). Route it in `~/.pointman-resolve/routes.toml`{on}, or move "
+                     f"the fallback with `resolve.set_fallback`._")
+    elif renamed:
+        lines.append(f"\n_Project “{snap['project']['name']}” isn't in routes.toml, but {renamed[1]} “{renamed[0]}” "
+                     f"(renamed?), so it came to that one's thread._")
     clips = under(snap, call.frame)
     if clips:
         lines.append("")
@@ -171,7 +181,6 @@ def compose(call: Call, snap: dict, mention: str, machine: str | None = None, *,
         if len(clips) > 2:
             lines += [f"- {c}" for c in clips]
     lines.append("")
-    on = f" on {machine}" if machine else ""
     call_it = (f"`resolve.marker_done` with `post` = this post's id (tool `resolve_marker_done`, or "
                f"`run_on_machine`{on})")
     lines.append(f"Done? React ✅, or call {call_it}: the marker turns green in Resolve." if ticks else
@@ -209,6 +218,95 @@ class State:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.data, indent=1), encoding="utf-8")
         tmp.replace(self.path)
+
+
+class Projects:
+    """projects.json beside the routes: each Resolve project seen, by name, with its ID and the
+    timelines seen in it, so a project renamed in Resolve (same IDs, new name) keeps its route."""
+
+    def __init__(self, path: Path | None = None, state: State | None = None):
+        self.path = path or journal.home() / "projects.json"
+        try:
+            self.data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.data = {}
+            for entry in (state.data.values() if state else ()):   # markers posted before 0.4.1
+                if entry.get("project") and entry.get("timeline_id"):
+                    self.see(entry["project"], None, entry["timeline_id"], save=False)
+            if self.data:
+                self.save()
+
+    def see(self, name: str, project_id: str | None, timeline_id: str | None, *, save: bool = True) -> None:
+        p = self.data.setdefault(name, {"id": None, "timelines": []})
+        changed = False
+        if project_id and p.get("id") != project_id:
+            p["id"], changed = project_id, True
+        if timeline_id and timeline_id not in p["timelines"]:
+            p["timelines"].append(timeline_id)
+            changed = True
+        if changed and save:
+            self.save()
+
+    def renamed_from(self, routes: dict, name: str, project_id: str | None,
+                     timeline_id: str | None) -> tuple[str, str] | None:
+        """The routed project this unrouted one was, by its IDs: (its name, how it's known), or None. A
+        shared timeline only counts while the routed project's own ID isn't known (markers from before
+        0.4.1): a Duplicate or Save As keeps the timelines but gets a new project ID."""
+        for old, r in (routes.get("projects") or {}).items():
+            known = self.data.get(old)
+            if old == name or not known or not (r or {}).get("thread"):
+                continue
+            if project_id and known.get("id") == project_id:
+                return old, "it has the same project ID as"
+            if project_id and known.get("id"):
+                continue                                  # two projects' IDs, and they differ: a copy, not a rename
+            if timeline_id and timeline_id in known.get("timelines", []):
+                return old, "its open timeline was seen in"
+        return None
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.data, indent=1, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self.path)
+
+
+class Fallback:
+    """fallback.json beside the routes: where a project with no route posts. The thread and agent of
+    the last marker posted from a routed project on this machine, unless an agent has moved it since
+    (resolve.set_fallback). With no file yet, it starts from the last marker in markers.json."""
+
+    def __init__(self, path: Path | None = None, state: State | None = None, routes: dict | None = None):
+        self.path = path or journal.home() / "fallback.json"
+        try:
+            self.data = json.loads(self.path.read_text(encoding="utf-8")) or None
+        except (OSError, ValueError):
+            self.data = None
+            posted = sorted((e for e in (state.data.values() if state else ()) if e.get("post") and e.get("project")),
+                            key=lambda e: e.get("at") or 0)
+            for entry in reversed(posted):
+                r = ((routes or {}).get("projects") or {}).get(entry["project"]) or {}
+                if r.get("thread"):
+                    self.set(int(r["thread"]), r.get("agent") or (routes or {}).get("person") or "james",
+                             by="marker", project=entry["project"])
+                    break
+
+    def get(self) -> dict | None:
+        return self.data
+
+    def set(self, thread: int, agent: str, *, by: str, project: str | None = None) -> dict | None:
+        """The fallback now; the one before is returned."""
+        was = self.data
+        self.data = {"thread": int(thread), "agent": str(agent).lstrip("@"), "by": by, "project": project,
+                     "at": time.time()}
+        if not was or (was.get("thread"), was.get("agent")) != (self.data["thread"], self.data["agent"]):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.data, indent=1, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.path)
+        else:
+            self.data = was                             # the same place: leave who set it, and when
+        return was
 
 
 # ------------------------------------------------------------ the one write: the marker's colour and tag

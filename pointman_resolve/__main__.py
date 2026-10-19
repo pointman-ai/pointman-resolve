@@ -695,12 +695,14 @@ def watch_markers() -> None:
                 entry["marked"] = writer.mark(found[0], found[1], markers.POSTED, tag)
                 entry["frame"] = found[0]
                 state.put(tid, call.key, entry)
+    # every round (10 s): James idle for HEAL_IDLE and the timeline unchanged since the last round, so a heal
+    # never lands mid-undo, and a reverted colour is back within about 20 s (James: 10 s, not 30)
+    end = tl.GetEndFrame()
+    if hid_idle_seconds() >= HEAL_IDLE and marks.get("heal_end") == end:
+        heal_colours(writer, state, tid)
+    marks["heal_end"] = end
     if time.monotonic() - marks["polled"] > MARK_POLL:
         marks["polled"] = time.monotonic()
-        end = tl.GetEndFrame()
-        if hid_idle_seconds() >= HEAL_IDLE and marks.get("heal_end") == end:
-            heal_colours(writer, state, tid)            # never in the middle of an undo run (resolvedoc, PR 11)
-        marks["heal_end"] = end
         for key, entry in state.open():
             if entry.get("status") != "posted" or entry.get("timeline_id") != tid:
                 continue

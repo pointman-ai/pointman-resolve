@@ -44,14 +44,15 @@ def snap(items, tracks=6):
 
 
 def test_geometry_matches_resolve(media):
-    # the cutout corner placement editor verified in Resolve: crop L/R 520, T 60, B 480, zoom 0.55
-    props = {"CropLeft": 520, "CropRight": 520, "CropTop": 60, "CropBottom": 480, "ZoomX": 0.55,
-             "Pan": 678.0, "Tilt": -507.0}
+    # the cutout corner placement checked against Resolve's own still (2026-10-19): crop L/R 260, T 30,
+    # B 240 units (2 px each on 1920x1080), zoom 0.55
+    props = {"CropLeft": 260, "CropRight": 260, "CropTop": 30, "CropBottom": 240, "ZoomX": 0.55,
+             "Pan": 339.0, "Tilt": -253.5}
     g = R.geometry(item("c", 5, 0, 25, media["cutout"], props=props), 1920, 1080)
     assert [round(v) for v in g["rect"]] == [1396, 783, 484, 297]
     # a 1728x1116 screen fits to 1080 high (pillarboxed); zoom 1.148 fills the width, and Tilt up
-    # moves it up: y = 540 + 1.148·(0 − 540) − 25.56
-    s = R.geometry(item("s", 4, 0, 25, media["screen"], props={"ZoomX": 1.1481481481, "Tilt": 25.5556}), 1920, 1080)
+    # moves it up 2 px per unit: y = 540 + 1.148·(0 − 540) − 2·12.78
+    s = R.geometry(item("s", 4, 0, 25, media["screen"], props={"ZoomX": 1.1481481481, "Tilt": 12.7778}), 1920, 1080)
     assert [round(v) for v in s["rect"]] == [0, -106, 1920, 1240]
 
 
@@ -68,8 +69,8 @@ def test_sixty_fps_source_time_is_in_timeline_frames(media):
 
 
 def test_still_composites_in_order(media, tmp_path):
-    cut = {"CropLeft": 520, "CropRight": 520, "CropTop": 60, "CropBottom": 480, "ZoomX": 0.55,
-           "Pan": 678.0, "Tilt": -507.0}
+    cut = {"CropLeft": 260, "CropRight": 260, "CropTop": 30, "CropBottom": 240, "ZoomX": 0.55,
+           "Pan": 339.0, "Tilt": -253.5}
     s = snap([item("cam", 2, 0, 50, media["cam"]), item("cut", 5, 0, 50, media["cutout"], props=cut)])
     out = tmp_path / "still.png"
     r = R.still(s, 10, out, width=1920)

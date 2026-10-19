@@ -67,8 +67,6 @@ class Group:
             pct = (p.get("speed") or {}).get("Percentage") if isinstance(p.get("speed"), dict) else None
             if pct not in (None, 100, 100.0):
                 why.append(f"it's retimed ({pct}%)")
-            if p.get("markers"):
-                why.append("it has clip markers")
             if why:
                 raise PlanError(f"{m.name(key)} {clock(p['record'], m.fps)} {p.get('name')}: can't re-lay it: "
                                 + "; ".join(why))
@@ -87,8 +85,18 @@ class Group:
         m = self.m
         if p.get("file") and p.get("media_fps") is not None:
             m.check_source(p)
-        q = m.lay(p, self.i, source)
         src = next((r for r in self.remove if r.get("id") == source), None)
+        if src and src.get("markers"):
+            # Resolve doesn't say whether a clip marker's frame counts from the clip's start or its source's, so
+            # they're carried only where both give the same frame: same source start and length
+            if m.src_first(p) != m.src_first(src) or p["frames"] != src["frames"]:
+                raise PlanError(f"{m.name(m.key(src))} {clock(src['record'], m.fps)} {src.get('name')} has clip markers, "
+                                "which are only carried when its source and length stay the same (a move, not a slip "
+                                "or a split): move them to the timeline first")
+            p = {**p, "markers": src["markers"]}
+        elif source is not None:
+            p = {**p, "markers": []}
+        q = m.lay(p, self.i, source)
         q["grade_from"] = source if grade and src and (src.get("grade") or {}).get("graded") else None
         q["inside"] = inside
         self.lay.append(q)
@@ -135,7 +143,7 @@ class Group:
 
 def brief(p: dict, *, full: bool = False) -> dict:
     keys = PLACE + ("id", "name", "media_fps", "media_frames", "src_start") + (
-        ("props", "fades", "color", "enabled", "from", "grade_from", "inside") if full else ("grade",))
+        ("props", "fades", "color", "enabled", "markers", "from", "grade_from", "inside") if full else ("grade",))
     return {k: p.get(k) for k in keys if k in p}
 
 
@@ -377,6 +385,10 @@ def op_join(m: Model, op: dict, g: Group) -> None:
             why = f"there's a transition at {clock(b['record'], m.fps)}"
         if why:
             raise PlanError(f"can't join {m.name(key)} {a.get('name')}: {why}")
+    marked = [p for p in ps[1:] if p.get("markers")]
+    if marked or ps[0].get("markers"):
+        raise PlanError(f"{m.name(key)} {(marked or ps)[0].get('name')} has clip markers, which a join can't carry yet "
+                        "(their frame reference is unmeasured): move them to the timeline first")
     for p in ps:
         g.take(p)
     q = dict(ps[0])
@@ -396,6 +408,13 @@ def op_cut(m: Model, op: dict, groups: list[Group], i: int, ctx: dict) -> None:
         if e2 > s1:
             raise PlanError(f"ranges overlap at {clock(s1, m.fps)}")
     fill = op.get("fill") or {}
+    first = min(s for s, _ in ranges)
+    relay = sum(1 for key in m.lanes() for p in m.tracks[key] if p["record"] + p["frames"] > first)
+    limit = int(op.get("max_relay", 400))
+    if relay > limit:
+        raise PlanError(f"undoing this cut would re-lay {relay} clips on every track from {clock(first, m.fps)} on "
+                        f"(Resolve can't ripple-insert), the person's own included: add \"max_relay\": {relay} to "
+                        "allow it")
     for s, e in ranges:                                   # the last first, so the earlier ones keep their place
         g = Group(i, op, m)
         g.ctx = ctx

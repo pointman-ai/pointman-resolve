@@ -85,7 +85,7 @@ def test_what_cant_be_done_is_said_before_anything_happens():
         "no op 'ripple'": {"op": "ripple"},
     }
     snap_marked = snap_of(fake.sample_timeline())
-    assert "it has clip markers" in compile_plan(snap_marked, {"ops": [{"op": "slip", "items": ["v2a"], "by": 1}]})["problems"][0]
+    assert "has clip markers" in compile_plan(snap_marked, {"ops": [{"op": "slip", "items": ["v2a"], "by": 1}]})["problems"][0]
     for why, op in bad.items():
         problems = compile_plan(snap, {"ops": [op]})["problems"]
         assert problems and why in problems[0], (why, problems)
@@ -233,3 +233,24 @@ def test_the_writer_only_makes_the_placers_writes():
         with pytest.raises(PermissionError):
             getattr(tl, name)
     assert tl.GetName() == "Stage 1 · silences out"
+
+
+def test_clip_markers_go_with_a_moved_clip_and_come_back_on_undo(tmp_path):
+    tl = fake.sample_timeline()                             # v2a has a clip marker at 12
+    plan = {"ops": [{"op": "move", "items": ["v2a"], "track": "V4"}]}
+    snap, rec, _ = run(tl, plan, tmp_path)
+    moved = tl.tracks[("video", 4)][0]
+    assert moved.uid != "v2a" and moved.markers[12]["name"] == "check lip sync"
+    A.undo(fake.Resolve(tl), snap, plan, rec, sleep=lambda s: None)
+    back = tl.tracks[("video", 2)][0]
+    assert back.start == tl.start and back.markers[12]["name"] == "check lip sync" and not tl.tracks[("video", 4)]
+
+
+def test_a_cut_whose_undo_would_relay_too_much_needs_saying_so():
+    snap = snap_of(strip())
+    op = {"op": "cut", "ranges": [[30, 60]], "fill": FILL, "ok": "James", "max_relay": 3}
+    media = {FILL["video"]: {"fps": 25.0, "frames": 100000}, FILL["audio"]: {"fps": 25.0, "frames": None}}
+    problems = compile_plan(snap, {"ops": [op]}, media=media)["problems"]
+    assert problems and "re-lay 5 clips" in problems[0] and "\"max_relay\": 5" in problems[0]
+    op["max_relay"] = 5
+    assert not compile_plan(snap, {"ops": [op]}, media=media)["problems"]

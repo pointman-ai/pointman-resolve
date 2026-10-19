@@ -108,6 +108,14 @@ class Item(Obj):
         self.enabled = on
         return True
 
+    def AddMarker(self, frame, color, name, note, duration, custom=""):
+        self._w("AddMarker")
+        if int(frame) in self.markers or not 0 <= int(frame) < self.frames:
+            return False
+        self.markers[int(frame)] = {"color": color, "name": name, "note": note, "duration": duration,
+                                    "customData": custom}
+        return True
+
     def CopyGrades(self, targets):
         self._w("CopyGrades")
         for x in targets:

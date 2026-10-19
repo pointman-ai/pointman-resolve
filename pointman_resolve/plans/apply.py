@@ -271,6 +271,12 @@ class Runner:
             bad.append("colour")
         if p.get("enabled") is not None and it.GetClipEnabled() != p["enabled"] and not it.SetClipEnabled(p["enabled"]):
             bad.append("enabled" if p["enabled"] else "disabled")
+        have_marks = {int(f) for f in (it.GetMarkers() or {})} if p.get("markers") else set()
+        for mk in p.get("markers") or []:
+            if int(mk["frame"]) not in have_marks and not it.AddMarker(
+                    int(mk["frame"]), mk.get("color") or "Blue", mk.get("name") or "", mk.get("note") or "",
+                    int(mk.get("duration") or 1), mk.get("custom") or ""):
+                bad.append(f"clip marker {mk.get('name')!r}")
         return bad
 
     def run_group(self, g: dict, m_after: Model, m_before: Model) -> None:

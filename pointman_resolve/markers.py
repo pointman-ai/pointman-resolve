@@ -249,13 +249,17 @@ class Projects:
 
     def renamed_from(self, routes: dict, name: str, project_id: str | None,
                      timeline_id: str | None) -> tuple[str, str] | None:
-        """The routed project this unrouted one was, by its IDs: (its name, how it's known), or None."""
+        """The routed project this unrouted one was, by its IDs: (its name, how it's known), or None. A
+        shared timeline only counts while the routed project's own ID isn't known (markers from before
+        0.4.1): a Duplicate or Save As keeps the timelines but gets a new project ID."""
         for old, r in (routes.get("projects") or {}).items():
             known = self.data.get(old)
             if old == name or not known or not (r or {}).get("thread"):
                 continue
             if project_id and known.get("id") == project_id:
                 return old, "it has the same project ID as"
+            if project_id and known.get("id"):
+                continue                                  # two projects' IDs, and they differ: a copy, not a rename
             if timeline_id and timeline_id in known.get("timelines", []):
                 return old, "its open timeline was seen in"
         return None

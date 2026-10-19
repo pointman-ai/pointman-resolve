@@ -155,6 +155,8 @@ def test_a_renamed_project_is_known_by_its_ids():
     assert M.Projects().renamed_from(routes, "spacesheep v1", "pr-1", "tl-7") == ("feat-flow-with-spacesheep",
                                                                                   "it has the same project ID as")
     assert known.renamed_from(routes, "next-video", "pr-2", "tl-8") is None
+    # a copy (Duplicate, Save As): the same timelines, but its own project ID, so it isn't the routed one
+    assert known.renamed_from(routes, "Spacesheep (copy)", "pr-9", "tl-1") is None
     assert known.renamed_from(routes, "feat-flow-with-spacesheep", "pr-1", "tl-1") is None   # it's routed itself
 
 

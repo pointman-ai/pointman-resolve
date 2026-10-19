@@ -90,7 +90,7 @@ marks: dict = {"state": None, "projects": None, "fallback": None, "read_posts": 
 MARK_EVERY = float(os.environ.get("POINTMAN_RESOLVE_MARK_EVERY") or 10)     # tests make these short
 MARK_POLL = float(os.environ.get("POINTMAN_RESOLVE_MARK_POLL") or 30)
 # a marker back at its own colour usually means James is undoing: recolour only once he's been idle this long
-HEAL_IDLE = float(os.environ.get("POINTMAN_RESOLVE_HEAL_IDLE") or 90)
+HEAL_IDLE = float(os.environ.get("POINTMAN_RESOLVE_HEAL_IDLE") or 10)   # James: 10 s is fine (13661)
 
 
 def poll_status() -> None:

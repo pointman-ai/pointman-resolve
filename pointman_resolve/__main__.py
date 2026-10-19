@@ -698,8 +698,8 @@ def watch_markers() -> None:
     # every round (10 s): James idle for HEAL_IDLE and the timeline unchanged since the last round, so a heal
     # never lands mid-undo, and a reverted colour is back within about 20 s (James: 10 s, not 30)
     end = tl.GetEndFrame()
-    if hid_idle_seconds() >= HEAL_IDLE and marks.get("heal_end") == end:
-        heal_colours(writer, state, tid)
+    if marks.get("heal_end") == end:
+        heal_colours(writer, state, tid)                # checks idle only if a colour needs healing
     marks["heal_end"] = end
     if time.monotonic() - marks["polled"] > MARK_POLL:
         marks["polled"] = time.monotonic()
@@ -717,6 +717,7 @@ def heal_colours(writer: markers.MarkerWriter, state: markers.State, tid: str) -
     given some other colour is his choice, and is left alone."""
     have = {m.get("customData"): (int(float(f)), m) for f, m in (writer.GetMarkers() or {}).items()
             if str(m.get("customData") or "").startswith("pm:")}
+    idle = None
     for key, entry in list(state.data.items()):
         if entry.get("timeline_id") != tid or entry.get("status") not in ("posted", "done") or not entry.get("tag"):
             continue
@@ -724,6 +725,10 @@ def heal_colours(writer: markers.MarkerWriter, state: markers.State, tid: str) -
         want = markers.DONE if entry["status"] == "done" else markers.POSTED
         if not found or found[1].get("color") == want or found[1].get("color") != (entry.get("color") or "Blue"):
             continue
+        if idle is None:
+            idle = hid_idle_seconds()                   # one ioreg, and only when there's something to heal
+        if idle < HEAL_IDLE:
+            return
         result = writer.mark(found[0], found[1], want, entry["tag"])
         ext.log(f"marker {entry['tag']} at {found[0]} was back to {found[1].get('color')}: recoloured {want} ({result})")
 

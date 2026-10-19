@@ -29,8 +29,28 @@ class Busy(RuntimeError):
     """Someone is editing or playing: the playhead isn't ours to move."""
 
 
+class Only:
+    """Just the named calls of a Resolve object, as markers.MarkerWriter does: grab() gets the project and the
+    timeline with full write power, and this keeps a slip from reaching anything but the playhead and the still."""
+
+    def __init__(self, obj, *names: str):
+        self._obj, self._names = obj, names
+
+    def __getattr__(self, name):
+        if name not in self._names:
+            raise PermissionError(f"frame checks only move the playhead and export a still: {name}() is not allowed")
+        return getattr(self._obj, name)
+
+
+PLAYHEAD = ("GetEndFrame", "GetCurrentTimecode", "SetCurrentTimecode")
+STILL = ("ExportCurrentFrameAsStill",)
+
+
 def timecode(frame: int, fps: float, start_frame: int) -> str:
-    """HH:MM:SS:FF of timeline frame `frame` (0 = the timeline's first frame), non-drop."""
+    """HH:MM:SS:FF of timeline frame `frame` (0 = the timeline's first frame), non-drop. At 23.976 or 29.97
+    (drop-frame) this would land on the wrong frame, so those are refused rather than guessed."""
+    if abs(fps - round(fps)) > 1e-6:
+        raise ValueError(f"{fps} fps isn't a whole rate: frame checks only handle whole rates for now")
     f = int(start_frame) + int(frame)
     n = round(fps)
     return f"{f // (3600 * n):02d}:{f // (60 * n) % 60:02d}:{f // n % 60:02d}:{f % n:02d}"
@@ -48,9 +68,10 @@ def idle(tl, wait: float = 3.0) -> tuple[int, str]:
 
 def grab(project, tl, frame: int, fps: float, start_frame: int, out: Path, *, wait: float = 3.0) -> dict:
     """Resolve's picture at timeline frame `frame`, as a PNG at `out`; the playhead goes back where it was."""
+    project, tl = Only(project, *STILL), Only(tl, *PLAYHEAD)
+    tc = timecode(frame, fps, start_frame)
     _, home = idle(tl, wait)
     out.parent.mkdir(parents=True, exist_ok=True)
-    tc = timecode(frame, fps, start_frame)
     try:
         if not tl.SetCurrentTimecode(tc):
             raise RuntimeError(f"Resolve wouldn't move the playhead to {tc}")
@@ -156,6 +177,8 @@ def calibrate(snap: dict, frame: int, resolve_png: Path, work: Path, *, units=UN
     """Render the frame at each candidate px-per-unit and keep the one closest to Resolve's own frame."""
     tl = snap["timeline"]
     scores = {}
+    # OTIO keeps Pan as a share of 960 units across the width, so width/960 px is the likeliest unit at any size
+    units = sorted(set(units) | {round((tl["width"] or 1920) / 960, 4)})
     for u in units:
         trial = {**snap, "timeline": {**tl, "px_per_unit": u}}
         out = work / f"shadow-u{u}.png"

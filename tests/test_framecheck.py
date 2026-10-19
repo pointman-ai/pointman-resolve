@@ -141,3 +141,29 @@ def test_calibration_is_stored_per_resolution(tmp_path, monkeypatch):
     F.store({"resolution": "1920x1080", "px_per_unit": 2.0, "psnr": 41.2, "margin_db": 6.1},
             project="p", timeline="t", frame=12)
     assert F.stored_units(1920, 1080) == 2.0 and F.stored_units(3840, 2160) is None
+
+
+def test_grab_can_only_touch_the_playhead_and_the_still():
+    tl = F.Only(Timeline(), *F.PLAYHEAD)
+    assert tl.GetCurrentTimecode() == "01:00:10:00"
+    with pytest.raises(PermissionError):
+        tl.DeleteClips([], False)
+    with pytest.raises(PermissionError):
+        F.Only(Project(), *F.STILL).SaveProject()
+
+
+def test_whole_rates_only():
+    with pytest.raises(ValueError):
+        F.timecode(10, 29.97, 0)
+    with pytest.raises(ValueError):
+        F.grab(Project(), Timeline(), 10, 23.976, 0, Path("/tmp/x.png"), wait=0)
+
+
+@needs_ffmpeg
+def test_calibrate_tries_width_over_960(tmp_path, cutout):
+    s = snap([item("c", 5, {"ZoomX": 0.55, "Pan": 339.0, "Tilt": -206.5}, cutout)])
+    s["timeline"].update(width=1280, height=720)
+    truth = tmp_path / "resolve.png"
+    assert R.still({**s, "timeline": {**s["timeline"], "px_per_unit": 1280 / 960}}, 12, truth, width=1280)["ok"]
+    r = F.calibrate(s, 12, truth, tmp_path, units=(1.0, 2.0))
+    assert r["px_per_unit"] == round(1280 / 960, 4) and r["resolution"] == "1280x720"

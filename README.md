@@ -134,7 +134,9 @@ data, so they can follow it without watching your screen.
   change to position, zoom, crop, colour or transitions. Exporting Resolve's frame moves the playhead,
   so it reads `GetEndFrame` and `GetCurrentTimecode` twice, `wait` seconds apart, and retries later if
   either changed (edits, scrubbing, playback). Afterwards it puts the playhead back and says whether it's
-  back.
+  back (if not, `ok` is false and a `warning` comes first). It can only reach those calls: the project and
+  timeline are wrapped like `MarkerWriter`. Its reads of the timeline stay in memory, so frame checks don't
+  add snapshots to the store. Whole frame rates only for now (23.976 and 29.97 are refused).
 
 ## Status
 

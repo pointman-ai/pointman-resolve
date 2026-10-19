@@ -350,13 +350,13 @@ def check_cmd(job):
 
 
 def live_snapshot(resolve) -> dict:
-    """A fresh snapshot of the open timeline (no OTIO), so the shadow render draws what's there now."""
+    """The open timeline as it is now, read through ReadOnly and kept in memory: not written to the store, so
+    frame checks don't become the `latest` that resolve.diff compares."""
     ro = ReadOnly(resolve)
     project = ro.GetProjectManager().GetCurrentProject()
-    tl = project.GetCurrentTimeline() if project else None
-    if not project or not tl:
+    if not project or not project.GetCurrentTimeline():
         raise Retry("no project or timeline open in Resolve")
-    return read(timeline_snapshot.write(ro, timeline_snapshot.store_dir(project.GetName(), tl.GetName()), otio=False))
+    return timeline_snapshot.take(ro)[0]
 
 
 def grab_frame(job, frame_of) -> tuple[dict, int, dict, Path]:
@@ -367,7 +367,7 @@ def grab_frame(job, frame_of) -> tuple[dict, int, dict, Path]:
         raise unavailable(e) from None
     snap = live_snapshot(resolve)
     frame = frame_of(snap)
-    project = resolve.GetProjectManager().GetCurrentProject()
+    project = resolve.GetProjectManager().GetCurrentProject()  # framecheck.grab() narrows it to the playhead + still
     t = snap["timeline"]
     png = Path(job.work) / "resolve.png"
     try:
@@ -376,6 +376,13 @@ def grab_frame(job, frame_of) -> tuple[dict, int, dict, Path]:
     except framecheck.Busy as e:
         raise Retry(str(e)) from None
     return snap, frame, got, png
+
+
+def restored_warning(got: dict) -> dict:
+    """First in the result when the playhead didn't go back: the one thing the person would notice."""
+    if got.get("restored"):
+        return {}
+    return {"warning": f"the playhead was NOT put back: it should be at {got.get('playhead')}"}
 
 
 def frame_of_param(job):
@@ -395,7 +402,8 @@ def frame_check(job):
     cmp = framecheck.compare(png, Path(shadow["out"]), side_by_side=side)
     plan = timeline_render.plan(snap, frame, frame + 1)
     floor = float(job.params.get("min_psnr", 30))
-    result = {"ok": (cmp["psnr"] or 0) >= floor, "frame": frame, **got, **cmp, "min_psnr": floor,
+    result = {**restored_warning(got), "ok": got["restored"] and (cmp["psnr"] or 0) >= floor, "frame": frame, **got, **cmp,
+              "min_psnr": floor,
               "px_per_unit": t.get("px_per_unit") or timeline_render.UNIT,
               "suspects": framecheck.suspects(plan, cmp["diff_box"]), "not_drawn": shadow["skipped"],
               "image": "Resolve | shadow render | difference ×4"}
@@ -417,8 +425,10 @@ def calibrate(job):
             raise RuntimeError(f"no visible clip is moved or cropped by {framecheck.MOVED:.0f}+ units: pass a `frame`")
         return f
     snap, frame, got, png = grab_frame(job, pick)
-    result = framecheck.calibrate(snap, frame, png, Path(job.work))
+    result = {**restored_warning(got), **framecheck.calibrate(snap, frame, png, Path(job.work))}
     result.update(frame=frame, **got)
+    if not got["restored"]:
+        result["ok"] = False
     if result["ok"] and not job.params.get("dry_run"):
         result["stored"] = str(framecheck.store(result, project=snap["project"]["name"],
                                                 timeline=snap["timeline"]["name"], frame=frame))

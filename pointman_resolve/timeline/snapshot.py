@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import SCHEMA, framecheck, journal
+from . import SCHEMA, framecheck, grades, journal
 
 KINDS = ("video", "audio", "subtitle")
 
@@ -112,6 +112,7 @@ def take(resolve) -> tuple[dict, object]:
                            "subtype": get(tl, "GetTrackSubType", kind, i) or None})
             for it in get(tl, "GetItemListInTrack", kind, i, default=[]) or []:
                 items.append(item_record(get, it, kind, i, t0))
+    grades.attach(items)                                   # the CDLs our tools set (Resolve can't read them back)
     snap = {
         "schema": SCHEMA, "taken": taken.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         "resolve": get(resolve, "GetVersionString"),

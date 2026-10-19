@@ -128,7 +128,9 @@ class Timeline(Obj):
                     at = rec + it.frames
                 children.append({"kind": otio_kind, "children": kids})
         markers = [{"name": m["name"]} for m in self.markers.values()]
-        Path(path).write_text(json.dumps({"tracks": {"children": children, "markers": markers}}))
+        # raw UTF-8, as Resolve writes it ("·" in names), not JSON's ASCII escapes
+        Path(path).write_text(json.dumps({"tracks": {"children": children, "markers": markers}}, ensure_ascii=False),
+                              encoding="utf-8")
         return True
 
 

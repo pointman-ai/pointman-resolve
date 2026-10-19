@@ -33,7 +33,7 @@ def record(tool: str, removed=(), added=(), *, timeline: str | None = None, note
     entry = {"time": now(), "tool": tool, "timeline": timeline, "removed": list(removed), "added": list(added),
              "note": note}
     path().parent.mkdir(parents=True, exist_ok=True)
-    with path().open("a") as f:
+    with path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     return entry
 
@@ -43,7 +43,7 @@ def entries(after: str | None = None, until: str | None = None, *, timeline: str
     if not path().exists():
         return []
     out = []
-    for line in path().read_text().splitlines():
+    for line in path().read_text(encoding="utf-8").splitlines():
         try:
             e = json.loads(line)
         except json.JSONDecodeError:

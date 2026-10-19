@@ -50,11 +50,11 @@ def otio_track(track: dict, fps: float) -> tuple[list[dict], list[dict]]:
 
 
 def check(snapshot_path: Path) -> dict:
-    snap = json.loads(Path(snapshot_path).read_text())
+    snap = json.loads(Path(snapshot_path).read_text(encoding="utf-8"))
     otio_file = (snap.get("otio") or {}).get("file")
     if not otio_file:
         return {"ok": False, "error": "this snapshot has no OTIO export beside it"}
-    otio = json.loads((Path(snapshot_path).parent / otio_file).read_text())
+    otio = json.loads((Path(snapshot_path).parent / otio_file).read_text(encoding="utf-8"))
     tl = snap["timeline"]
     fps, w, h = tl.get("fps") or 25.0, tl.get("width") or 1920, tl.get("height") or 1080
     by_kind = {"Video": [], "Audio": []}

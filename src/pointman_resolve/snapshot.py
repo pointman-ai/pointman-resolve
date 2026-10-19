@@ -125,7 +125,7 @@ def take(resolve) -> tuple[dict, object]:
 def latest(out_dir: Path, timeline_id: str | None = None, *, look_back: int = 50) -> dict | None:
     """The newest snapshot in out_dir (of this timeline, if given), with its file name, or None."""
     for f in sorted(out_dir.glob("snapshot-*.json"), reverse=True)[:look_back]:
-        snap = json.loads(f.read_text())
+        snap = json.loads(f.read_text(encoding="utf-8"))
         if timeline_id is None or snap.get("timeline", {}).get("id") == timeline_id:
             snap["file"] = f.name
             return snap
@@ -154,6 +154,6 @@ def write(resolve, out_dir: Path, *, otio: bool = True) -> Path:
         snap["otio"] = {"file": path.name if ok and path.exists() else None, "s": round(time.perf_counter() - t, 3)}
     target = out_dir / f"{stem}.json"
     tmp = target.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(snap, indent=1, default=str))
+    tmp.write_text(json.dumps(snap, indent=1, default=str), encoding="utf-8")
     os.replace(tmp, target)  # readers never see half a snapshot
     return target

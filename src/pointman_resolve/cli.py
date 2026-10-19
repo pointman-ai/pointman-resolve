@@ -35,7 +35,7 @@ def cmd_snapshot(args) -> dict:
             raise SystemExit("no project or timeline open in Resolve")
         out = journal.home() / "snapshots" / slug(project.GetName()) / slug(tl.GetName())
     path = write(resolve, out, otio=not args.no_otio)
-    snap = json.loads(path.read_text())
+    snap = json.loads(path.read_text(encoding="utf-8"))
     return {"snapshot": str(path), "otio": str(path.with_suffix(".otio")) if (snap.get("otio") or {}).get("file") else None,
             "items": len(snap["items"]), "markers": len(snap["markers"]), "journal": len(snap["journal"]),
             "errors": snap["errors"], "took_s": snap["took_s"], "previous": snap["previous"]}
@@ -43,10 +43,10 @@ def cmd_snapshot(args) -> dict:
 
 def cmd_diff(args) -> dict:
     from .diff import diff
-    a, b = (json.loads(Path(p).read_text()) for p in (args.a, args.b))
+    a, b = (json.loads(Path(p).read_text(encoding="utf-8")) for p in (args.a, args.b))
     result = diff(a, b, local_journal=not args.no_local_journal)
     if args.out:
-        Path(args.out).write_text(json.dumps(result, indent=1))
+        Path(args.out).write_text(json.dumps(result, indent=1), encoding="utf-8")
         return {"diff": args.out, "counts": result["counts"], "note": result["note"]}
     return result
 

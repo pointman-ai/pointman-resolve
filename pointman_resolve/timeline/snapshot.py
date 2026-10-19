@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import SCHEMA, journal
+from . import SCHEMA, framecheck, journal
 
 KINDS = ("video", "audio", "subtitle")
 
@@ -102,6 +102,8 @@ def take(resolve) -> tuple[dict, object]:
                 "start_timecode": get(tl, "GetStartTimecode"),
                 "width": int(number(settings.get("timelineResolutionWidth")) or 0) or None,
                 "height": int(number(settings.get("timelineResolutionHeight")) or 0) or None}
+    # Crop/Pan/Tilt px per unit, as resolve.calibrate measured it for this resolution (None: not measured)
+    timeline["px_per_unit"] = framecheck.stored_units(timeline["width"], timeline["height"])
     tracks, items = [], []
     for kind in KINDS:
         for i in range(1, (get(tl, "GetTrackCount", kind) or 0) + 1):

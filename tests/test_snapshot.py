@@ -40,7 +40,8 @@ def test_snapshot_has_the_interface_fields():
     snap, _ = take(resolve())
     assert snap["schema"] == 1 and snap["project"]["name"] == "feat-flow-with-spacesheep"
     assert snap["timeline"] == {"name": "Stage 1 · silences out", "id": "tl-1", "fps": 25.0, "start_frame": 90000,
-                                "end_frame": 90150, "start_timecode": "01:00:00:00", "width": 1920, "height": 1080}
+                                "end_frame": 90150, "start_timecode": "01:00:00:00", "width": 1920, "height": 1080,
+                                "px_per_unit": None}
     assert [(t["kind"], t["index"]) for t in snap["tracks"]] == [("video", i) for i in range(1, 7)] + [("audio", 1)]
     by = {i["id"]: i for i in snap["items"]}
     cam = by["v2a"]

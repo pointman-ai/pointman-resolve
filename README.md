@@ -27,7 +27,8 @@ made while Resolve is closed waits until it's open again.
 
 ## Commands
 
-Agents get `resolve_render`, `resolve_still`, `resolve_snapshot`, `resolve_diff` and `resolve_check` as tools, or call any command on the Mac with
+Agents get `resolve_render`, `resolve_still`, `resolve_snapshot`, `resolve_diff`, `resolve_check`, `resolve_frame_check` and
+`resolve_calibrate` as tools, or call any command on the Mac with
 `run_on_machine`. Every Resolve call runs on one lane, one at a time, since Resolve's API isn't meant to be
 driven from several threads at once.
 
@@ -39,6 +40,8 @@ driven from several threads at once.
 | `resolve.snapshot` | `otio?` (default true) | The open timeline as data, **read only**: every track, item and marker, saved as `snapshot-<utc>.json` with Resolve's OTIO export beside it (below). A few seconds |
 | `resolve.diff` | `timeline?`, `a?`, `b?`, `full?` | What changed between two snapshots of a timeline, by default its latest and the one before. Reads files only |
 | `resolve.check` | `timeline?`, `snapshot?` | A snapshot against the OTIO export taken with it, item by item. Reads files only |
+| `resolve.frame_check` | `frame`, `min_psnr?` (30), `wait?` (3 s) | Resolve's own picture of one frame against the shadow render of it: PSNR, the box where they differ, and the clips there with their Zoom/Pan/Tilt/crops (closest fit first). Posts Resolve \| shadow \| difference. Moves the playhead only after the timeline has been still for `wait` seconds, and puts it back |
+| `resolve.calibrate` | `frame?`, `dry_run?`, `wait?` | Pixels per Crop/Pan/Tilt unit at the open timeline's size, measured on Resolve's own frame: the candidate (0.5–4) whose shadow render matches it best. Picks a frame with a moved or cropped clip itself. Sets nothing on any clip; stored per resolution in `calibration.json`, and later snapshots carry it |
 
 - **Your project is left as it was:** a render saves the project's render settings to a temporary preset
   and restores them after. It also goes back to the page and timeline you were on.
@@ -121,9 +124,19 @@ data, so they can follow it without watching your screen.
 - **Units** (Resolve 21.1): `in` is `GetLeftOffset`, the in-point in timeline frames, and it matched
   Resolve's OTIO on every item. `src_start` is seconds on the media's own timecode. Pan, tilt and crops
   are in Resolve's units, not pixels: one unit is 2 px on a 1920x1080 timeline (measured against
-  Resolve's own stills; other sizes aren't yet). OTIO stores them as a fraction of the whole frame: Pan and
+  Resolve's own stills). `resolve.calibrate` measures other sizes, and a snapshot carries what's been
+  measured for its size as `timeline.px_per_unit` (`null` if nothing has; the renderer then assumes 2). OTIO stores them as a fraction of the whole frame: Pan and
   CropLeft/Right ÷ 960 units (= ÷ width), Tilt and CropTop/Bottom ÷ 540 (= ÷ height).
 - From a shell: `python -m pointman_resolve.timeline.cli snapshot | diff A B | check S`.
+- **Resolve's own frame** (`timeline/framecheck.py`): the shadow render is only as right as its model of
+  Resolve. On Spacesheep v1 every cutout was invisible in Resolve for a day while our placer and renderer
+  agreed with each other, both taking units for pixels. `resolve.frame_check` closes that gap after any
+  change to position, zoom, crop, colour or transitions. Exporting Resolve's frame moves the playhead,
+  so it reads `GetEndFrame` and `GetCurrentTimecode` twice, `wait` seconds apart, and retries later if
+  either changed (edits, scrubbing, playback). Afterwards it puts the playhead back and says whether it's
+  back (if not, `ok` is false and a `warning` comes first). It can only reach those calls: the project and
+  timeline are wrapped like `MarkerWriter`. Its reads of the timeline stay in memory, so frame checks don't
+  add snapshots to the store. Whole frame rates only for now (23.976 and 29.97 are refused).
 
 ## Status
 

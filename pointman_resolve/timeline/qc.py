@@ -7,6 +7,10 @@ Picture (from the snapshot):
   what's below shows for a blink (60 fps rounding and razor slips leave these);
 - frozen: a video source (not an alpha cutout or graphic) whose frames don't change across the stretches the cut
   uses. On Spacesheep v1, three OBS recordings were one frozen frame for 31 minutes of the cut.
+Clutter (PFE-35, not something a viewer sees, but what makes a timeline slow to work in):
+- per track: clips never seen (under an opaque full-frame clip above for their whole span) and through-edits
+  (neighbours that could be one clip: same file and settings, the source carrying on frame for frame), plus
+  empty tracks and tracks still called "Video 3".
 Sound (the mix of a range, drawn like the shadow render, up to AUDIO_MAX_S):
 - loudness (integrated LUFS) and true peak, against a target (YouTube: -14 LUFS, peaks under -1 dBTP). An ESTIMATE:
   the mix has the source files at each clip's AudioVolume, but not track faders, the master bus or Fairlight effects;
@@ -211,6 +215,81 @@ def sound(snap: dict, start: int, end: int, *, target: float = TARGET_LUFS) -> t
     return stats, issues
 
 
+SAME = ("ZoomX", "ZoomY", "Pan", "Tilt", "CropLeft", "CropRight", "CropTop", "CropBottom", "Opacity", "CompositeMode",
+        "RotationAngle", "FlipX", "FlipY", "AudioVolume", "AudioPan")
+
+
+def graded(it: dict) -> bool:
+    return bool((it.get("grade") or {}).get("graded") or it.get("cdl"))
+
+
+def continues(x: dict, y: dict, fps: float) -> bool:
+    """y carries on from x frame for frame: same file, right after it, the source going on (60 fps in its own frames)."""
+    if x.get("file") != y.get("file") or x["record"] + (x.get("frames") or 0) != y["record"]:
+        return False
+    rate = float(x.get("media_fps") or fps)
+    if abs(rate - fps) > 0.01 and x.get("src_frame") is not None and y.get("src_frame") is not None:
+        return abs(y["src_frame"] - (x["src_frame"] + (x.get("frames") or 0) * rate / fps)) < 1.5
+    return y.get("in") == (x.get("in") or 0) + (x.get("frames") or 0)
+
+
+def clutter(snap: dict) -> dict:
+    """Per track: clips, never seen, through-edits; and the tracks that are empty or unnamed."""
+    tl = snap["timeline"]
+    fps, W, H = tl.get("fps") or 25.0, tl.get("width") or 1920, tl.get("height") or 1080
+    unit = float(tl.get("px_per_unit") or R.UNIT)
+    items = [i for i in snap["items"] if i.get("type") != "transition" and i.get("record") is not None]
+    covers: dict[int, list] = {}
+    for it in items:
+        if it["kind"] == "video" and it.get("file") and it.get("enabled") is not False:
+            g = R.geometry(it, W, H, unit)
+            if g and R.covers_frame(g, W, H):
+                covers.setdefault(it["track"], []).append((it["record"], it["record"] + it["frames"]))
+    out, totals = {}, {"clips": 0, "never_seen": 0, "through_edits": 0, "through_edits_if_grades_match": 0}
+    for t in snap["tracks"]:
+        kind, k = t["kind"], t["index"]
+        lane = f"{kind[0].upper()}{k}"
+        mine = sorted((i for i in items if i["kind"] == kind and i["track"] == k), key=lambda i: i["record"])
+        hidden = 0
+        if kind == "video":
+            for it in mine:
+                a, b = it["record"], it["record"] + (it.get("frames") or 0)
+                spans = sorted(s for j, ss in covers.items() if j > k for s in ss if s[1] > a and s[0] < b)
+                pos = a
+                for s0, s1 in spans:
+                    if s0 > pos:
+                        break
+                    pos = max(pos, s1)
+                hidden += pos >= b
+        through = maybe = 0
+        for x, y in zip(mine, mine[1:]):
+            if not (continues(x, y, fps) and (x.get("color"), x.get("enabled")) == (y.get("color"), y.get("enabled"))
+                    and all((x.get("props") or {}).get(p) == (y.get("props") or {}).get(p) for p in SAME)):
+                continue
+            # a grade's values can't be read back (no GetCDL; ExportLUT refuses on the Edit page): two graded
+            # pieces are one clip only if the CDLs our tools recorded say so (grades.json), else "if they match"
+            gx, gy = graded(x), graded(y)
+            if not gx and not gy:
+                through += 1
+            elif x.get("cdl") and x.get("cdl") == y.get("cdl") and (x.get("grade") or {}).get("tools") == (y.get("grade") or {}).get("tools"):
+                through += 1
+            else:
+                maybe += 1
+        name = t.get("name") or ""
+        out[lane] = {"name": name, "clips": len(mine), "never_seen": hidden, "through_edits": through,
+                     "through_edits_if_grades_match": maybe,
+                     "empty": not mine, "unnamed": bool(re.fullmatch(r"(Video|Audio|Subtitle) \d+", name)) or not name}
+        totals["clips"] += len(mine)
+        totals["never_seen"] += hidden
+        totals["through_edits"] += through
+        totals["through_edits_if_grades_match"] += maybe
+    # without a grade field (before PFE-11's snapshots), a graded piece can't be told from an ungraded one
+    totals["grades_compared"] = any("grade" in i for i in items)
+    totals["empty_tracks"] = [l for l, r in out.items() if r["empty"]]
+    totals["unnamed_tracks"] = [l for l, r in out.items() if r["unnamed"] and not r["empty"]]
+    return {"tracks": out, "totals": totals}
+
+
 def report(snap: dict, start: int | None = None, end: int | None = None, *, audio: bool = True,
            sources: bool = True) -> dict:
     tl = snap["timeline"]
@@ -231,7 +310,8 @@ def report(snap: dict, start: int | None = None, end: int | None = None, *, audi
     counts = {}
     for i in issues:
         counts[i["check"]] = counts.get(i["check"], 0) + 1
-    return {"ok": not issues, "from": start, "to": end, "fps": fps, "range": f"{tc(start, fps)}–{tc(end, fps)}", "counts": counts,
+    mess = clutter(snap)
+    return {"ok": not issues, "clutter": mess, "from": start, "to": end, "fps": fps, "range": f"{tc(start, fps)}–{tc(end, fps)}", "counts": counts,
             "sound": stats, "issues": issues}
 
 
@@ -247,6 +327,20 @@ def markdown(r: dict, title: str) -> str:
                      f"true peak about {s.get('true_peak')} dBTP.")
     elif s.get("skipped"):
         lines.append(f"\nSound: {s['skipped']}.")
+    c = (r.get("clutter") or {}).get("totals")
+    if c:
+        lines.append(f"\nClutter: {c['clips']} clips, {c['never_seen']} never seen, {c['through_edits']} through-edits"
+                     + (f", {c['through_edits_if_grades_match']} more if their grades match"
+                        if c.get("through_edits_if_grades_match") else "")
+                     + ("" if c.get("grades_compared") else " (grades not read: some may be pieces graded differently)")
+                     + (f", empty tracks {', '.join(c['empty_tracks'])}" if c["empty_tracks"] else "")
+                     + (f", unnamed {', '.join(c['unnamed_tracks'])}" if c["unnamed_tracks"] else "") + ".")
+        rows = [(l, t) for l, t in r["clutter"]["tracks"].items()
+                if t["never_seen"] or t["through_edits"] or t["through_edits_if_grades_match"]]
+        if rows:
+            lines += ["", "| Track | Clips | Never seen | Through-edits | If grades match |", "|---|---|---|---|---|"]
+            lines += [f"| {l} {t['name']} | {t['clips']} | {t['never_seen']} | {t['through_edits']} | "
+                      f"{t['through_edits_if_grades_match']} |" for l, t in rows]
     if r["issues"]:
         lines += ["", "| At | Check | What |", "|---|---|---|"]
         fps = r.get("fps") or 25.0

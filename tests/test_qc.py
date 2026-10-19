@@ -98,3 +98,23 @@ def test_the_report_says_times_and_that_sound_is_an_estimate(monkeypatch):
          "issues": [{"check": "black", "at": 1512, "to": 1513, "what": "no video for 1 frames"}]}
     md = qc.markdown(r, "t")
     assert "| 1:00.48 | black |" in md and "clip levels only" in md and "about -15.8 LUFS" in md
+
+
+def test_clutter_counts_never_seen_and_through_edits(monkeypatch):
+    g = {"rect": (0, 0, 1920, 1080), "alpha": False, "opacity": 100.0}
+    monkeypatch.setattr(qc.R, "geometry", lambda it, W, H, unit=2.0: g if it["track"] == 2 else {**g, "alpha": True})
+    s = snap([item("a", 1, 0, 50, "/scr.mp4", **{"in": 0}), item("b", 1, 50, 50, "/scr.mp4", **{"in": 50}),
+              item("hid", 1, 120, 20, "/scr.mp4", **{"in": 300}), item("top", 2, 100, 60, "/cam.mp4")], end=200)
+    s["tracks"][0]["name"], s["tracks"][1]["name"], s["tracks"][2]["name"] = "screen", "camera", "Video 3"
+    c = qc.clutter(s)
+    v1 = c["tracks"]["V1"]
+    assert (v1["clips"], v1["through_edits"], v1["never_seen"]) == (3, 1, 1)
+    assert c["totals"]["empty_tracks"] == ["V3", "A1"] and not c["totals"]["grades_compared"]
+    s["items"][1]["grade"] = {"graded": True, "tools": ["Primary Balance"]}   # one graded: only "if they match"
+    s["items"][0]["grade"] = {"graded": False}
+    v1 = qc.clutter(s)["tracks"]["V1"]
+    assert (v1["through_edits"], v1["through_edits_if_grades_match"]) == (0, 1)
+    cdl = {"Slope": "0.9 1 1.1"}                                    # both graded the same, as our tools recorded
+    s["items"][0].update(grade={"graded": True, "tools": ["Primary Balance"]}, cdl=cdl)
+    s["items"][1]["cdl"] = dict(cdl)
+    assert qc.clutter(s)["tracks"]["V1"]["through_edits"] == 1

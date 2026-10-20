@@ -31,13 +31,18 @@ and `CHANGELOG.md` describe 21.x. README.txt is from 2024 and misses things like
 ## Units and looks
 
 - Crop, Pan and Tilt: one unit is 2 px on a 1920×1080 timeline for a 16:9 source (Pan 100 moved a clip 200 px,
-  Tilt 100 moved it 200 px up, CropRight 260 cut 520 px). The units are shares of the clip's fitted image, not
-  the frame: 960 across its width, 540 down its height. A 1728×1116 screen recording fits to 1672×1080, so its
-  Pan unit is 1.74 px while its Tilt unit stays 2 px. Using 2 px put a desktop 2–3 px off. Measured for Pan
-  on a pillarboxed source only: that crops on a non-16:9 clip and Tilt on a letterboxed (wider than 16:9) one
-  follow the same rule is inferred. Check the first such clip with `resolve_frame_check`. A crop of 520 per side in "pixels" removes the whole picture, and
-  the clip vanishes without an error. OTIO export stores them as units ÷ 960 (Pan, CropLeft/Right) and
-  ÷ 540 (Tilt, CropTop/Bottom).
+  Tilt 100 moved it 200 px up, CropRight 260 cut 520 px).
+  - **Pan and Tilt are shares of the clip's fitted image**, not the frame: 960 across its width, 540 down its
+    height. A 1728×1116 screen recording fits to 1672×1080, so its Pan unit is 1.74 px while its Tilt unit
+    stays 2 px. Using 2 px put a desktop 2–3 px off.
+  - **Crop isn't:** it's timeline pixels before the zoom, 2 px a unit whatever the source's shape. On that
+    recording at zoom 1.478, CropRight 471.7 put the edge at x 780, where fitted shares would put it at 960
+    (`resolve_frame_check`); 410.8 put it at 960.
+  - Not measured yet: Tilt and vertical crop on a letterboxed (wider than 16:9) source. Check the first such
+    clip with `resolve_frame_check`.
+  - A crop of 520 per side in "pixels" removes the whole picture, and the clip vanishes without an error.
+  - OTIO export stores them as units ÷ 960 (Pan, CropLeft/Right) and ÷ 540 (Tilt, CropTop/Bottom): for a crop
+    that's a fraction of the timeline's width or height.
 - Zoom scales about the frame centre after the crop. Pan is right, Tilt is up.
 - `TimelineItem.SetCDL({"NodeIndex": "1", "Slope": "r g b", ...})` sets a grade, but there's no `GetCDL`, and
   `ExportLUT` refuses on the Edit page. Record every CDL you set in `~/.pointman-resolve/grades.json` under the

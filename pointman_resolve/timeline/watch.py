@@ -10,12 +10,18 @@ screen, camera, voice, loft, desktop, cutout, graphics, flips, sfx. The checks:
   sync        a cutout or loft piece (file `<clip>-f<start>…`, rendered from camera frame <start>) showing a camera
               frame 2+ frames off the voice under it, less that camera's offset (`offsets`: clip -> voice − camera,
               seconds; edit/sync_activity.py). Fix: a slip by the difference.
-  no cutout   a desktop piece with no cutout over part of it (8+ frames).
+  no cutout   a desktop piece with no cutout over part of it (8+ frames); not a split screen's (cropped left or
+              right: the person is on the other side, in the loft).
   orphan cue  a sound on the sfx track with no card or flip starting or ending near it. Fix: delete it.
-  scrap       a picture piece under 8 frames on the agents' tracks (sounds are short by design). Fix: delete it.
+  scrap       a picture piece under 8 frames on the agents' tracks (sounds are short by design). Fix: a join, if it
+              carries on from its neighbour (same file and settings, the source running on); a delete, if it's a card
+              or flip; otherwise none (deleting a desktop scrap would leave a hole).
   see-through a cut on a lower track that shows through a full-frame card or flip while it fades or wipes (its
               alpha from the file), or just before or after one (transition_cover.py's rule).
-  chapter     a chapter card (c01-…, c02-…) that was there last time and isn't now.
+  chapter     a chapter card (c01-…) that was there last time and isn't now, by card id: a re-render in another
+              style (-schematic / -paper / -signal, -vN) is the same card.
+Findings whose key starts with one of the config's `accept` entries (e.g. "sync:<item id>") are left out: what
+the person or the editor made that way on purpose.
 A change the person made to the agents' tracks is taken as meant: the checks look at the timeline as it is,
 not at what changed, so nothing is ever moved back to where it was.
 """
@@ -38,6 +44,12 @@ OPAQUE, CLEAR, NEAR = 0.99, 0.02, 6
 W, H = 480, 270
 STEM = re.compile(r"^(?P<clip>[A-Za-z]+\d+)-f(?P<start>\d+)")
 CHAPTER = re.compile(r"^c\d{2}-")
+STYLE = re.compile(r"(-(schematic|signal|paper))?(-v\d+)?$")
+
+
+def card_id(file: str) -> str:
+    """A card whatever style or version it's rendered in: c07-discuss-the-options-paper -> c07-discuss-the-options."""
+    return STYLE.sub("", Path(file).stem)
 
 
 def clock(f: int, fps: float) -> str:
@@ -108,6 +120,9 @@ def no_cutout(snap: dict, roles: dict) -> list[dict]:
     cut = lane_items(snap, roles.get("cutout"))
     out = []
     for d in lane_items(snap, roles.get("desktop")):
+        props = d.get("props") or {}
+        if float(props.get("CropLeft") or 0) or float(props.get("CropRight") or 0):
+            continue                                       # a split screen: he's in the loft beside it, by design
         a, b = d["record"], d["record"] + d["frames"]
         covered = sorted((max(a, c["record"]), min(b, c["record"] + c["frames"])) for c in cut
                          if c["record"] < b and c["record"] + c["frames"] > a)
@@ -137,22 +152,41 @@ def orphans_and_scraps(snap: dict, roles: dict) -> list[dict]:
     for role in OURS:
         if role == "sfx":
             continue                                       # ticks and fills are short by design
-        for it in lane_items(snap, roles.get(role)):
-            if (it.get("frames") or 0) < SCRAP:
-                out.append({"check": "scrap", "at": it["record"], "to": it["record"] + it["frames"],
-                            "lane": lane(roles[role]), "id": it["id"],
-                            "what": f"{lane(roles[role])} {name(it)} is {it['frames']} frames long",
-                            "fix": {"op": "delete", "items": [it["id"]]}, "key": f"scrap:{it['id']}"})
+        items = lane_items(snap, roles.get(role))
+        for n, it in enumerate(items):
+            if (it.get("frames") or 0) >= SCRAP:
+                continue
+            nb = [x for x in (items[n - 1] if n else None, items[n + 1] if n + 1 < len(items) else None)
+                  if x and continues(*sorted((x, it), key=lambda y: y["record"]))]
+            if nb:
+                fix, how = {"op": "join", "items": [nb[0]["id"], it["id"]]}, "joins its neighbour"
+            elif role in ("graphics", "flips"):
+                fix, how = {"op": "delete", "items": [it["id"]]}, "a card scrap: delete it"
+            else:
+                fix, how = None, "doesn't carry on from a neighbour: deleting it would leave a hole"
+            out.append({"check": "scrap", "at": it["record"], "to": it["record"] + it["frames"],
+                        "lane": lane(roles[role]), "id": it["id"],
+                        "what": f"{lane(roles[role])} {name(it)} is {it['frames']} frames long ({how})",
+                        "fix": fix, "key": f"scrap:{it['id']}"})
     return out
 
 
+def continues(a: dict, b: dict) -> bool:
+    """b carries straight on from a: back to back, same file and settings, the source running on (within a frame
+    for media at another rate)."""
+    return (a["record"] + a["frames"] == b["record"] and a.get("file") and a.get("file") == b.get("file")
+            and (a.get("props") or {}) == (b.get("props") or {}) and a.get("color") == b.get("color")
+            and abs((a.get("in") or 0) + a["frames"] - (b.get("in") or 0)) <= 1)
+
+
 def chapters_gone(snap: dict, previous: list[str] | None, roles: dict) -> tuple[list[dict], list[str]]:
-    """Chapter cards there last time and not now; and the ones there now, for next time."""
-    now = sorted({name(i) for i in snap["items"] if CHAPTER.match(name(i))})
+    """Chapter cards (by card id) there last time and not now; and the ones there now, for next time."""
+    now = sorted({card_id(name(i)) for i in snap["items"] if CHAPTER.match(name(i))})
     out = []
     for c in sorted(set(previous or []) - set(now)):
         out.append({"check": "chapter", "at": 0, "to": 0, "lane": lane(roles["graphics"]) if roles.get("graphics") else "",
-                    "id": None, "what": f"the chapter card {c} isn't on the timeline any more: an edit took it out",
+                    "id": None, "what": f"the chapter card {c} isn't on the timeline any more (in any style): an edit "
+                                        "took it out",
                     "fix": None, "key": f"chapter:{c}"})
     return out, now
 
@@ -275,6 +309,8 @@ def run(snap: dict, config: dict | None, *, previous_chapters: list[str] | None 
         findings += see_through(snap, roles, alpha=alpha)
     gone, chapters = chapters_gone(snap, previous_chapters, roles)
     findings += gone
+    accept = [str(a) for a in (config or {}).get("accept") or []]
+    findings = [f for f in findings if not any(f["key"].startswith(a) for a in accept)]
     findings.sort(key=lambda f: (f["at"], f["check"]))
     return {"findings": findings, "chapters": chapters, "roles": {r: lane(k) for r, k in roles.items()},
             "fixes": [f["fix"] for f in findings if f.get("fix")]}

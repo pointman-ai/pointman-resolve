@@ -44,10 +44,32 @@ def test_desktop_without_cutout_orphan_cues_and_scraps():
     assert found == {("orphan cue", "whoosh"), ("scrap", "bit")}                # the tick sits on its card; ticks aren't scraps
 
 
+def test_split_screens_and_scraps_that_carry_on():
+    s = snap([item("split", "video", 4, 0, 100, "/s/desk.mp4", props={"CropRight": 480}),
+              item("d1", "video", 4, 200, 50, "/s/desk.mp4", inn=1000), item("d2", "video", 4, 250, 6, "/s/desk.mp4", inn=1050),
+              item("d3", "video", 4, 300, 5, "/s/other.mp4"), item("c", "video", 5, 200, 106, "/x/C0030-f000000-alpha.mov"),
+              item("cardbit", "video", 6, 400, 4, "/g/s01-card.mov")])
+    r = watch.roles_of(s, CFG)
+    assert watch.no_cutout(s, r) == []                     # the split screen (100 frames, no cutout) is left alone
+    fixes = {f["id"]: f["fix"] for f in watch.orphans_and_scraps(s, r) if f["check"] == "scrap"}
+    assert fixes == {"d2": {"op": "join", "items": ["d1", "d2"]}, "d3": None,
+                     "cardbit": {"op": "delete", "items": ["cardbit"]}}
+
+
+def test_accepted_findings_stay_out():
+    good = item("c2", "video", 5, 150, 50, "/x/C0030-f005000-alpha.mov", inn=440)
+    s = snap([item("v", "audio", 1, 0, 400, "/a/voice.wav", inn=900), good])
+    assert [f["check"] for f in watch.run(s, CFG, transitions=False)["findings"]] == ["sync"]
+    assert watch.run(s, {**CFG, "accept": ["sync:c2"]}, transitions=False)["findings"] == []
+
+
 def test_a_chapter_card_that_went():
     s = snap([item("c3", "video", 6, 0, 50, "/g/c03-visual-docs.mov")])
-    gone, now = watch.chapters_gone(s, ["c03-visual-docs.mov", "c07-discuss.mov"], watch.roles_of(s, CFG))
-    assert [f["what"].split()[3] for f in gone] == ["c07-discuss.mov"] and now == ["c03-visual-docs.mov"]
+    gone, now = watch.chapters_gone(s, ["c03-visual-docs", "c07-discuss"], watch.roles_of(s, CFG))
+    assert [f["what"].split()[3] for f in gone] == ["c07-discuss"] and now == ["c03-visual-docs"]
+    # c03 re-rendered in another style is the same chapter
+    s2 = snap([item("c3", "video", 6, 0, 50, "/g/c03-visual-docs-paper-v2.mov")])
+    assert watch.chapters_gone(s2, now, watch.roles_of(s2, CFG))[0] == []
 
 
 def test_a_cut_showing_through_a_card_fading_in(monkeypatch):

@@ -28,10 +28,11 @@ def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def record(tool: str, removed=(), added=(), *, timeline: str | None = None, note: str = "") -> dict:
-    """Append one edit of ours. One write of one line, so concurrent tools don't interleave."""
+def record(tool: str, removed=(), added=(), *, timeline: str | None = None, note: str = "", **data) -> dict:
+    """Append one edit of ours (with any `data` a reader needs, e.g. a gap's at and frames). One write of one
+    line, so concurrent tools don't interleave."""
     entry = {"time": now(), "tool": tool, "timeline": timeline, "removed": list(removed), "added": list(added),
-             "note": note}
+             "note": note, **data}
     path().parent.mkdir(parents=True, exist_ok=True)
     with path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")

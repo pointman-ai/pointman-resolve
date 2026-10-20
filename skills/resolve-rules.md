@@ -91,6 +91,18 @@ and `CHANGELOG.md` describe 21.x. README.txt is from 2024 and misses things like
   4. Look at Resolve's own frames across it after every re-cut: `resolve_frame_check` at each frame, which
      waits for the person to pause and puts the playhead back (not a loop of `SetCurrentTimecode` calls).
 
+## Inserting time
+
+- Resolve's API can't insert a gap: `DeleteClips(…, True)` only ripples time out. But `SetSpeed({"Percentage": …,
+  "RippleTimeline": True})` moves every item that starts after the changed clip, on every track, and the
+  timeline's markers. `resolve_insert_gap {at, frames}` uses that on a temporary 1-frame clip, so a pause opens
+  everywhere at once without re-laying anything (grades, transitions and colours stay). A clip that only crosses
+  `at`, like a card, keeps playing over the gap.
+- Then fill it: run the clips that end at `at` on from their own source (check the voice there is silent),
+  hold or extend the card, and move a transition on the old cut to the new one. Close it again with a negative
+  `frames` (it refuses if anything starts in the gap or a timeline marker sits in it).
+- Untested: what the ripple does to clips on a locked track. Check the result if any track is locked.
+
 ## Background jobs
 
 `CreateSubtitlesFromAudio` and similar run in the background. Once, one hung, and every `SaveProject` and

@@ -1,7 +1,7 @@
 # Editing as a team: editor, FX artist, renders
 
 How a cut runs with more than one agent, from editing a 47-minute video with an editor agent in
-Resolve, an FX artist making motion graphics in chat, and a render agent on another machine, all with
+Resolve, an FX artist making motion graphics from the thread, and a render agent on another machine, all with
 the person who owns the video. SKILLS.md has the short version; this is the detail.
 
 ## Who does what
@@ -29,7 +29,9 @@ the person who owns the video. SKILLS.md has the short version; this is the deta
    agent.
 3. **The FX artist answers with an ETA** ("On it: d02b-v2, about 30 min"), works, then posts the delivery.
 4. **The editor places it**, checks Resolve's own frames, and reports to the person with stills and the
-   undo command. Then the marker is marked done (✅ or `resolve.marker_done`).
+   undo command. Re-read the slot first: the person may have re-cut since the brief. When a stretch had
+   grown 47 frames, holding the card's last frame in a `-v2` (ffmpeg `tpad=stop_mode=clone`) beat leaving a
+   gap; a bigger change goes back as a new brief. Then the marker is marked done (✅ or `resolve.marker_done`).
 5. **Notes on a placed graphic** go back through the editor to the FX artist, as a new brief with the
    person's words quoted. The FX artist doesn't edit the timeline to try a change.
 
@@ -48,6 +50,8 @@ Everything the FX artist needs, so nobody has to ask back:
   Mention any punch-in under the card, since the card may need to move with it.
 - **The look:** which family (paper, graphite, a glitch), and the reference card if there is one.
 - **The ending:** a hard cut out, or an animation out, and whether a transition covers it.
+- **A full-screen card is a transition too:** ask for the frames where it's fully opaque, so the cuts
+  beneath land under them (resolve-rules.md, "Transitions and fades").
 - **Content to check:** code, names, numbers. The FX artist checks them against the source (a repo
   commit, a doc) and marks anything that's a sketch as a sketch.
 - **Consecutive markers about one idea** can be one card with steps, rather than two cards back to back.
@@ -80,6 +84,9 @@ Timing the editor acts on travels in files the editor's scripts read, kept next 
   FX artist can add parallax.
 
 A number said only in a post gets lost or retyped wrong; one in the manifest is used as written.
+
+When a card comes off the timeline (the person deletes it, or a screen recording replaces it), its cue
+sounds come off too. A tick with no card over it sounds for nothing: in one cut, 18 were left behind.
 
 ## Options
 

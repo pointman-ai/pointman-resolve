@@ -33,12 +33,12 @@ class Only:
     """Just the named calls of a Resolve object, as markers.MarkerWriter does: grab() gets the project and the
     timeline with full write power, and this keeps a slip from reaching anything but the playhead and the still."""
 
-    def __init__(self, obj, *names: str):
-        self._obj, self._names = obj, names
+    def __init__(self, obj, *names: str, why: str = "frame checks only move the playhead and export a still"):
+        self._obj, self._names, self._why = obj, names, why
 
     def __getattr__(self, name):
         if name not in self._names:
-            raise PermissionError(f"frame checks only move the playhead and export a still: {name}() is not allowed")
+            raise PermissionError(f"{self._why}: {name}() is not allowed")
         return getattr(self._obj, name)
 
 

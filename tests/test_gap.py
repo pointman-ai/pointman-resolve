@@ -12,16 +12,19 @@ import fake
 class Clip(fake.Item):
     def __init__(self, *a, timeline=None, **k):
         super().__init__(*a, **k)
-        self.timeline = timeline
+        self.timeline, self.source = timeline, self.frames
 
     def SetSpeed(self, opts):
-        """What Resolve does with RippleTimeline: the clip's length follows the speed, and everything starting
-        after the clip's start, on every track, moves by the difference; so do the timeline's markers."""
-        new = round(self.frames * 100.0 / opts["Percentage"])
+        """What Resolve does with RippleTimeline: the clip's length is its source length over the speed (cut
+        down to whole frames), and everything starting after the clip's start, on every track, moves by the
+        difference; so do the timeline's markers. `skip` leaves one track behind, as a bad ripple would."""
+        new = int(self.source * 100.0 / opts["Percentage"])
         d, start = new - self.frames, self.start
         self.frames = new
         if opts.get("RippleTimeline"):
-            for items in self.timeline.tracks.values():
+            for key, items in self.timeline.tracks.items():
+                if key == getattr(self.timeline, "skip", None):
+                    continue
                 for it in items:
                     if it is not self and it.start > start:
                         it.start += d
@@ -102,3 +105,31 @@ def test_it_waits_for_a_still_timeline(monkeypatch):
     with pytest.raises(Busy):
         gap.insert(pool, tl, 100, 15, wait=0)
     assert lanes(tl)["V1"] == [("a", 0, 100), ("b", 100, 50)]
+
+
+def test_a_length_resolve_would_round_down_is_nudged_until_it_lands():
+    tl, pool = cut()
+    for frames in (6, 11, 13, 23):                       # 100 * 1 / (1 + 6) etc. aren't exact in floating point
+        tl, pool = cut()
+        assert gap.insert(pool, tl, 100, frames, wait=0)["moved"] == frames
+        assert lanes(tl)["V1"] == [("a", 0, 100), ("b", 100 + frames, 50)]
+
+
+def test_a_ripple_that_leaves_a_track_behind_fails_and_says_how_far_it_moved():
+    tl, pool = cut()
+    tl.skip = ("audio", 1)
+    with pytest.raises(gap.GapError) as e:
+        gap.insert(pool, tl, 100, 15, wait=0)
+    assert "1 of 5 clips ended up in the wrong place" in str(e.value)        # vb, on the track left behind
+    assert "moved +15" in str(e.value) and "frames=-15" in str(e.value)
+    assert ("video", 3) not in tl.tracks                 # the temporary track still came off
+
+
+def test_closing_over_a_marker_or_before_the_first_frame_is_refused():
+    tl, pool = cut()
+    gap.insert(pool, tl, 100, 15, wait=0)
+    tl.markers[105] = {"name": "an @editor note in the gap"}
+    with pytest.raises(ValueError, match="markers"):
+        gap.insert(pool, tl, 100, -15, wait=0)
+    with pytest.raises(ValueError, match="first frame"):
+        gap.insert(pool, tl, 0, 15, wait=0)

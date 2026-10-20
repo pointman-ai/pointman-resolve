@@ -532,7 +532,11 @@ def insert_gap(job):
         got = timeline_gap.insert(project.GetMediaPool(), tl, at, frames, wait=float(job.params.get("wait", 3)))
     except framecheck.Busy as e:
         raise Retry(str(e)) from None
-    journal.record("resolve.insert_gap", timeline=tl.GetUniqueId(), note=f"{frames:+d} frames at {at}")
+    except timeline_gap.GapError as e:  # the timeline may have moved: say so, and journal it, before failing
+        journal.record("resolve.insert_gap", timeline=tl.GetUniqueId(), note=f"FAILED: {e}", at=at, frames=frames)
+        raise
+    # every clip from `at` on moved because of us: follow mode (PFE-13) and diffs read at/frames from here
+    journal.record("resolve.insert_gap", timeline=tl.GetUniqueId(), note=f"{frames:+d} frames at {at}", at=at, frames=frames)
     project.SaveProject()
     return {**got, "undo": {"at": at, "frames": -frames}}
 

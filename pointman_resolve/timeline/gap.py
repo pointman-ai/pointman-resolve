@@ -27,7 +27,12 @@ POOL_CALLS = ("AppendToTimeline",)
 
 
 class GapError(RuntimeError):
-    """The gap didn't come out as asked; the message says what moved and how to put it back."""
+    """The gap didn't come out as asked; the message says what moved and how to put it back. `moved` is the
+    shift that really happened (for the journal: follow mode mustn't take the ask for it)."""
+
+    def __init__(self, message: str, moved: int):
+        super().__init__(message)
+        self.moved = moved
 
 
 def _items(tl, kind):
@@ -84,8 +89,8 @@ def insert(pool, tl, at: int, frames: int, *, wait: float = 3.0) -> dict:
         marks = [f for f in (tl.GetMarkers() or {}) if at <= f < at - frames]
         if marks:
             raise ValueError(f"timeline markers in {at}–{at - frames} ({len(marks)}): move them before closing the gap")
-    before = _starts(tl, t0)
     end, _ = idle(tl, wait)
+    before = _starts(tl, t0)                     # after idle(): an edit before then would make it stale
     n = 1 if frames > 0 else 1 - frames
     filler = _filler(tl, n)
     if not tl.AddTrack("video"):
@@ -114,5 +119,5 @@ def insert(pool, tl, at: int, frames: int, *, wait: float = 3.0) -> dict:
                ([f"left an empty video track {k}: delete it"] if not track_gone else [])
     if problems:
         undo = f"; undo with at={at}, frames={-moved}" if moved else ""
-        raise GapError("; ".join(problems) + f" (the timeline moved {moved:+d}{undo})")
+        raise GapError("; ".join(problems) + f" (the timeline moved {moved:+d}{undo})", moved)
     return {"at": at, "frames": frames, "moved": moved}

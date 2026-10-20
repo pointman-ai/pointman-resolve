@@ -533,7 +533,7 @@ def insert_gap(job):
     except framecheck.Busy as e:
         raise Retry(str(e)) from None
     except timeline_gap.GapError as e:  # the timeline may have moved: say so, and journal it, before failing
-        journal.record("resolve.insert_gap", timeline=tl.GetUniqueId(), note=f"FAILED: {e}", at=at, frames=frames)
+        journal.record("resolve.insert_gap", timeline=tl.GetUniqueId(), note=f"FAILED: {e}", at=at, frames=e.moved)
         raise
     # every clip from `at` on moved because of us: follow mode (PFE-13) and diffs read at/frames from here
     journal.record("resolve.insert_gap", timeline=tl.GetUniqueId(), note=f"{frames:+d} frames at {at}", at=at, frames=frames)

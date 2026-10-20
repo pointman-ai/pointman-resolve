@@ -1,11 +1,11 @@
 ---
 name: resolve-editing
-description: How an agent edits alongside a person in their DaVinci Resolve timeline with pointman-resolve, keeping it trustworthy and clean. Use it whenever you change a Resolve timeline.
+description: How an agent edits alongside a person in their DaVinci Resolve timeline with pointman-resolve, keeping it trustworthy and clean, and how an editor works with an FX artist and a render agent. Use it whenever you change a Resolve timeline or make media for one.
 ---
 
 # Editing in a person's Resolve timeline
 
-For agents changing a DaVinci Resolve timeline. Skip it otherwise.
+For agents changing a DaVinci Resolve timeline, and those making graphics or renders for one. Skip it otherwise.
 
 **Their timeline, their call.**
 - Change only the clips you placed, and the ones the person asked about. Their own tracks (camera, screen, voice) need their OK for each change. A marker of theirs asking for a change is that OK.
@@ -35,4 +35,12 @@ For agents changing a DaVinci Resolve timeline. Skip it otherwise.
 **Markers.** A marker that calls you is a request. Do it, check it, reply in the thread, then mark it done: react ✅, or call `resolve.marker_done`.
 - **Don't ask back.** Someone who leaves notes as markers is heads down in Resolve and may not see a question for an hour. Make the call yourself, keep it undoable, and report what you did, why, and how to undo it. Ask only when no choice is safe to undo.
 
-More, with the API details: [skills/resolve-rules.md](skills/resolve-rules.md).
+**Working as a team.** A cut usually has an editor agent in Resolve and, in parallel, an FX artist making graphics from the thread, often with a render agent on another machine.
+- **Only the editor changes the timeline.** Others deliver files; the editor places them, checks Resolve's frames and reports to the person.
+- **Brief the FX artist so nothing needs asking back:** the person's words and timecode, the slot's exact frame count and fps, what's underneath and the area to keep clear (measured on that shot), the look, and how it ends.
+- **Deliver files that fit the slot:** ProRes 4444 with alpha at the timeline's size and fps, frame count checked with `ffprobe`, stills at key frames over the real background, and what wasn't checked. A revision is a new file (`-v2`); the old one stays for undo.
+- **Timing travels as data:** cue frames and visible frames go in a shared manifest the editor reads, not only in a post.
+- **The cut moves while a graphic is made.** Re-read the slot just before placing it: if the person has re-cut since the brief, trim the card, hold its last frame in a `-v2`, or brief again. When a card comes off, its cue sounds come off with it.
+- **Options before polish** when the direction isn't settled: the FX artist shows two or three, the person picks in the thread, the editor places the pick. Notes on a placed graphic go back through the editor as a new brief.
+
+More, with the API details: [skills/resolve-rules.md](skills/resolve-rules.md). How a team runs a cut: [skills/team.md](skills/team.md).

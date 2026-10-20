@@ -413,7 +413,7 @@ def op_join(m: Model, op: dict, g: Group) -> None:
     g.put(q, ps[0].get("id"))
 
 
-def op_cut(m: Model, op: dict, groups: list[Group], i: int, ctx: dict) -> None:
+def op_cut(m: Model, op: dict, groups: list[Group], i: int, ctx: dict, upto: int | None = None) -> None:
     ranges = sorted({(int(s), int(e)) for s, e in op.get("ranges") or []}, reverse=True)
     if not ranges or any(s >= e for s, e in ranges):
         raise PlanError("needs \"ranges\": [[start, end], ...], each start before its end")
@@ -421,14 +421,9 @@ def op_cut(m: Model, op: dict, groups: list[Group], i: int, ctx: dict) -> None:
         if e2 > s1:
             raise PlanError(f"ranges overlap at {clock(s1, m.fps)}")
     fill = op.get("fill") or {}
-    first = min(s for s, _ in ranges)
-    relay = sum(1 for key in m.lanes() for p in m.tracks[key] if p["record"] + p["frames"] > first)
-    limit = int(op.get("max_relay", 400))
-    if relay > limit:
-        raise PlanError(f"undoing this cut would re-lay {relay} clips on every track from {clock(first, m.fps)} on "
-                        f"(Resolve can't ripple-insert), the person's own included: add \"max_relay\": {relay} to "
-                        "allow it")
     for s, e in ranges:                                   # the last first, so the earlier ones keep their place
+        if upto is not None and len(groups) >= upto:      # a cut is a group per range: stop part-way through
+            break
         g = Group(i, op, m)
         g.ctx = ctx
         for key in m.lanes():
@@ -502,7 +497,7 @@ def compile_plan(snap: dict, plan: dict, *, media: dict | None = None, own=OWN_T
                 if own_lanes and not op.get("ok"):
                     raise PlanError(f"a cut changes {', '.join(m.name(k) for k in own_lanes)}: say what asked for it "
                                     "in \"ok\" (a marker or a post)")
-                op_cut(m, op, groups, i, ctx)
+                op_cut(m, op, groups, i, ctx, upto)
                 continue
             if kind not in OPS:
                 raise PlanError(f"no op {kind!r} (one of {', '.join(sorted([*OPS, 'cut']))})")

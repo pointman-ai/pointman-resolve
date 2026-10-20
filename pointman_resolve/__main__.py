@@ -670,9 +670,7 @@ def make_plan(ro, project, tl, plan: dict) -> dict:
     model: Model = compiled.pop("model")
     fps = snap["timeline"].get("fps") or 25
     pid = plan_store.new_id()
-    ripples = [g["ripple"]["range"][0] for g in compiled["groups"] if g.get("ripple")]
-    undo_cost = (sum(1 for it in snap["items"] if it.get("record") is not None and it["record"] + (it.get("frames") or 0)
-                     > min(ripples)) if ripples else None)
+    ripples = [g["ripple"]["range"] for g in compiled["groups"] if g.get("ripple")]
     saved = {"id": pid, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "note": plan.get("note") or "",
              "ops": plan["ops"], "snapshot": {"folder": str(path.parent), "file": path.name},
              "timeline": {"name": snap["timeline"]["name"], "id": snap["timeline"]["id"], "project": snap["project"]["name"]},
@@ -686,8 +684,9 @@ def make_plan(ro, project, tl, plan: dict) -> dict:
     return {"plan": pid, "ok": not compiled["problems"], "problems": compiled["problems"],
             "warnings": compiled["warnings"], "counts": compiled["counts"], "frames_changed": by_op,
             "clutter": compiled["clutter"], "steps": steps_text(compiled, fps), "end": [model.end, clock(model.end, fps)],
-            "undo": (f"a cut: undo re-lays the {undo_cost} clips after {clock(min(ripples), fps)}" if ripples else
-                     "resolve.undo puts back every clip it changes"), "file": str(folder / "compiled.json")}
+            "undo": (f"resolve.undo opens the {len(ripples)} cut{'s' * (len(ripples) != 1)} again with a ripple and lays "
+                     "back only what they split or took out" if ripples else "resolve.undo puts back every clip it changes"),
+            "file": str(folder / "compiled.json")}
 
 
 @ext.command("resolve.plan")
@@ -864,7 +863,8 @@ def undo_cmd(job):
     base = read(Path(record.data["base"]["folder"]) / record.data["base"]["file"])
     plan = {"id": pid, "ops": saved["ops"], "note": saved.get("note")}
     try:
-        out = plan_apply.undo(raw, base, plan, record, media=saved.get("media") or {})
+        out = plan_apply.undo(raw, base, plan, record, media=saved.get("media") or {},
+                              gap_wait=float(job.params.get("wait", 3)))
     except plan_apply.Stop as e:
         return {"plan": pid, "ok": False, "stopped": str(e), "state": record.data["state"]}
     return {"plan": pid, "ok": True, **out, "state": record.data["state"]}

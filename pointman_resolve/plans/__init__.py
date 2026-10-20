@@ -8,7 +8,7 @@ it touches Resolve, applied by one placer, verified, and undone in one call.
              placement checked against Resolve afterwards (apply.py)
     undo     the applied record, run backwards by the same placer
 
-Resolve 21.1 can't move, slip, split or ripple-insert a clip, so every op that changes where a clip is
-or what it shows is a delete plus an AppendToTimeline, with the clip's settings, fades, colour, grade
-(CopyGrades) and transitions put back.
+Resolve 21.1 can't move, slip or split a clip, so every op that changes where a clip is or what it shows
+is a delete plus an AppendToTimeline, with the clip's settings, fades, colour, grade (CopyGrades) and
+transitions put back. A cut's undo opens it again with a rippling speed change (timeline/gap.py).
 """

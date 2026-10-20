@@ -191,8 +191,11 @@ def test_a_cut_ripples_every_track_and_undo_puts_the_time_back(tmp_path):
     assert now["V2"] == [(0, 30, 500, "cam.mp4"), (50, 120, 700, "cam.mp4")]
     assert now["A1"] == [(0, 30, 0, "voice.wav"), (30, 140, 60, "voice.wav")]
     assert sorted(tl.markers) == [10, 90]                        # 120 moved back by the cut, 45 went with it
-    A.undo(resolve, snap, plan, rec, media=media, sleep=lambda s: None)
+    A.undo(resolve, snap, plan, rec, media=media, sleep=lambda s: None, gap_wait=0)
     assert lanes(tl) == before and sorted(tl.markers) == [10, 45, 120]
+    # the cut was opened again with a ripple, not re-laid: the clip after it is the same clip, not a copy
+    assert tl.tracks[("video", 1)][-1].uid == "s2" and tl.tracks[("video", 2)][-1].uid == "c2"
+    assert set(tl.tracks) == {("video", 1), ("video", 2), ("audio", 1)}     # no temporary track left
 
 
 def test_a_swap_moves_the_blocks_and_their_markers(tmp_path):
@@ -246,14 +249,30 @@ def test_clip_markers_go_with_a_moved_clip_and_come_back_on_undo(tmp_path):
     assert back.start == tl.start and back.markers[12]["name"] == "check lip sync" and not tl.tracks[("video", 4)]
 
 
-def test_a_cut_whose_undo_would_relay_too_much_needs_saying_so():
-    snap = snap_of(strip())
-    op = {"op": "cut", "ranges": [[30, 60]], "fill": FILL, "ok": "James", "max_relay": 3}
+def test_undo_of_a_cut_stopped_part_way_opens_only_what_was_cut(tmp_path):
+    tl = strip()
+    before = lanes(tl)
+    plan = {"ops": [{"op": "cut", "ranges": [[30, 60], [150, 160]], "fill": FILL, "ok": "James"}]}
     media = {FILL["video"]: {"fps": 25.0, "frames": 100000}, FILL["audio"]: {"fps": 25.0, "frames": None}}
-    problems = compile_plan(snap, {"ops": [op]}, media=media)["problems"]
-    assert problems and "re-lay 5 clips" in problems[0] and "\"max_relay\": 5" in problems[0]
-    op["max_relay"] = 5
-    assert not compile_plan(snap, {"ops": [op]}, media=media)["problems"]
+    resolve = fake.Resolve(tl)
+    pool = resolve.pm.project.pool
+    pool.extra = [fake.Media(FILL["video"]), fake.Media(FILL["audio"], fps=0)]
+    snap = snap_of(tl)
+    assert len(compile_plan(snap, plan, media=media, upto=1)["groups"]) == 1     # upto counts a cut's ranges
+    tl.writable = True
+    calls, real = [0], pool.AppendToTimeline
+
+    def busy_after_two(infos):                                # the second range finds Resolve busy
+        calls[0] += 1
+        return real(infos) if calls[0] <= 2 else []
+    pool.AppendToTimeline = busy_after_two
+    rec = A.Record(tmp_path / "applied.json")
+    with pytest.raises(A.Stop, match="nothing was changed"):
+        A.apply(resolve, snap, plan, rec, media=media, sleep=lambda s: None)
+    assert rec.data["groups_done"] == 1 and lanes(tl)["V1"][-1] == (150, 40, 185, "screen.mp4")   # 150–160 cut
+    pool.AppendToTimeline = real
+    A.undo(resolve, snap, plan, rec, media=media, sleep=lambda s: None, gap_wait=0)
+    assert lanes(tl) == before and set(tl.tracks) == {("video", 1), ("video", 2), ("audio", 1)}
 
 
 def test_graded_pieces_join_only_when_the_plan_says_their_grades_match(tmp_path):

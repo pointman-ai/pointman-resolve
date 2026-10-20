@@ -104,8 +104,8 @@ under it, and a still of that frame. The still is drawn from the source files by
 
 ## Edit plans
 
-Resolve 21.1's API can't move, slip, split or ripple-insert a clip. So every change to where a clip is
-or what it shows is a delete plus an `AppendToTimeline`, with everything about the clip put back. Edit
+Resolve 21.1's API can't move, slip or split a clip. So every change to where a clip is or what it shows
+is a delete plus an `AppendToTimeline`, with everything about the clip put back. Edit
 plans do that the same careful way every time (PFE-11; they replace Spacesheep's fix_sync.py,
 fix_sync_constant.py and move_block.py).
 
@@ -148,9 +148,10 @@ Resolve's own values (`GetProperties` keys): Crop, Pan and Tilt in Resolve units
   switches timelines, adds tracks, moves the playhead or starts a background job.
 - **Verify:** after applying, the live timeline is read and compared with the model, clip by clip.
 - **Undo** (`resolve.undo`): everything the plan placed or moved goes, and the snapshot's clips come
-  back where they were, grades copied across from what replaced them, markers moved back. A cut's
-  undo re-lays every clip after it, since Resolve can't ripple-insert. It refuses to touch a clip
-  that isn't the plan's own or the snapshot's.
+  back where they were, grades copied across from what replaced them, markers moved back. A cut is
+  opened again first, the last one made first, with the same rippling speed change `resolve.insert_gap`
+  uses (`timeline/gap.py`), so everything after it moves back as it is. Only what the cut split or took
+  out is laid again. Undo refuses to touch a clip that isn't the plan's own or the snapshot's.
 - **Preview** (`resolve.preview`): the shadow render before and after each op.
 
 Plans live in `~/.pointman-resolve/plans/<id>/`: `plan.json`, `compiled.json` (every step) and

@@ -27,6 +27,7 @@ import math
 import time
 from pathlib import Path
 
+from ..timeline import gap as timeline_gap
 from ..timeline import grades as grade_records
 from ..timeline import journal
 from .compile import compile_plan
@@ -411,6 +412,9 @@ class Runner:
         markers = {int(f): mk for f, mk in (self.tl.GetMarkers() or {}).items() if f >= e}
         if not self.tl.DeleteClips(inside, True):
             raise Stop(f"Resolve wouldn't ripple-delete {clock(s, 25)}–{clock(e, 25)}")
+        if self.rec.data.get("partial") is not None:     # undo re-opens it even if a check below stops
+            self.rec.data["partial"]["rippled"] = True
+            self.rec.save()
         after = {}
         for key in m_before.lanes():
             for it in self.items(key):
@@ -475,25 +479,85 @@ def apply(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=
     return {"groups": len(groups), "ids": len(run.ids), "warnings": record.data["warnings"]}
 
 
-def undo(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=time.sleep, wait: float = 2.0) -> dict:
-    """Put back what the plan changed: every clip it placed or moved goes, the snapshot's clips come back
-    (grades copied across from what replaced them). Refuses if anything in the way isn't the plan's own."""
-    done = record.data.get("groups_done", 0) + (1 if record.data.get("partial") else 0)
+def live_model(snap: dict, plan: dict, media, record: Record, groups: list[dict]) -> Model:
+    """The timeline as the plan has left it: every finished group, and what a stopped one got done."""
+    k = record.data.get("groups_done", 0)
+    m = compile_plan(snap, plan, media=media, upto=k)["model"]
+    part = record.data.get("partial")
+    if part and isinstance(part.get("group"), int) and part["group"] < len(groups):
+        g = groups[part["group"]]
+        gone = set(part.get("removed") or [])
+        for r in g["remove"]:
+            key = (r["kind"], r["track"])
+            m.tracks[key] = [p for p in m.tracks.get(key, []) if not (r["id"] in gone and p.get("id") == r["id"])]
+        laid = set(part.get("laid") or [])
+        for q in g["lay"]:
+            if q["id"] in laid:
+                m.tracks.setdefault((q["kind"], q["track"]), []).append(dict(q))
+        for key in m.tracks:
+            m.tracks[key].sort(key=lambda p: p["record"])
+        if part.get("rippled") and g.get("ripple"):
+            s, e = g["ripple"]["range"]
+            m.ripple(s, e)
+    return m
+
+
+def undo(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=time.sleep, wait: float = 2.0,
+         gap_wait: float = 3.0) -> dict:
+    """Put back what the plan changed: each cut is opened again with a ripple (timeline/gap.py), then every
+    clip the plan placed or moved in what it touched goes and the snapshot's clips come back (grades copied
+    across from what replaced them). Refuses if anything in the way isn't the plan's own."""
+    finished = record.data.get("groups_done", 0)
+    part = record.data.get("partial")
+    done = finished + (1 if part else 0)
     if not done:
         raise Stop("nothing of this plan has been applied")
     base = Model(snap)
-    compiled = compile_plan(snap, plan, media=media, upto=done)
-    after = compiled["model"]
+    groups = compile_plan(snap, plan, media=media)["groups"][:done]
+    after = live_model(snap, plan, media, record, groups)
     run = Runner(resolve, record, sleep=sleep, wait=wait)
     ids = record.data.get("ids", {})
-    ours = {real: temp for temp, real in ids.items()}
-    # the region each lane's restore covers: what the groups touched, a cut's from its start to the end
+    # 1. the cuts open again, the last one made first: everything after each moves back to where it was,
+    #    markers too, and only what each cut split or took out is left to lay
+    rippled = [(j, g["ripple"]["range"]) for j, g in enumerate(groups) if g.get("ripple")
+               and (j < finished or (part or {}).get("rippled"))]
+    reopened = record.data.setdefault("reopened", [])
+    for j, (s, e) in reversed(rippled):
+        if j not in reopened:
+            try:
+                timeline_gap.insert(unwrap(run.pool), unwrap(run.tl), s, e - s,
+                                    wait=gap_wait if not reopened else min(gap_wait, 0.5))  # then it's our own moves
+            except timeline_gap.GapError as err:
+                record.data["state"] = "stopped"
+                record.save()
+                raise Stop(f"re-opening the cut at {clock(s, base.fps)} went wrong: {err}") from None
+            except timeline_gap.Busy as err:
+                raise Busy(str(err)) from None
+            reopened.append(j)
+            record.save()
+            journal.record("resolve.undo", timeline=run.tl.GetUniqueId(), note=f"re-open the cut {s}–{e} of "
+                           f"{record.data.get('plan')}", at=s, frames=e - s)
+        after.reopen(s, e - s)
+    run.playhead = run.tl.GetCurrentTimecode()
+
+    def final(x: int, j: int) -> int:
+        """Frame x as group j saw it, where it is now that every cut before j is open again."""
+        for i, (s, e) in reversed([r for r in rippled if r[0] < j]):
+            x = x + (e - s) if x >= s else x
+        return x
+
+    # 2. what each group touched, where it is now: a cut's range on every track (and, below, the whole of
+    #    each clip it split); any other op's own spans
     regions: dict[tuple, list] = {}
-    for g in compiled["groups"]:
-        for name, spans in g["spans"].items():
-            key = base.lane_of(name)
-            for s, e in spans:
-                regions.setdefault(key, []).append([s, 10 ** 9 if g.get("ripple") else e])
+    for j, g in enumerate(groups):
+        if g.get("ripple"):
+            s, e = g["ripple"]["range"]
+            spans = {key: [[s, e]] for key in base.lanes()}
+        else:
+            spans = {base.lane_of(name): v for name, v in g["spans"].items()}
+        for key, sps in spans.items():
+            for s0, e0 in sps:
+                regions.setdefault(key, []).append([final(s0, j), final(e0, j)])
     for key, spans in regions.items():                 # whole clips of the snapshot's at either edge
         for sp in spans:
             for p in base.overlapping(key, sp[0], sp[1]):
@@ -559,7 +623,7 @@ def undo(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=t
                     transitions.append({"key": list(key), "name": t["name"], "frames": t["frames"], "cut": c,
                                         "left": f"undo-{left}"})
     sets = []
-    for g in compiled["groups"]:
+    for g in groups:
         for s in g["set"]:
             b = base_by_id.get(s["id"])
             if b:
@@ -575,6 +639,7 @@ def undo(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=t
     run.run_group_undo(group, base, after, sources)
     record.data["undo_ids"] = {k: v for k, v in run.ids.items() if k.startswith("undo-")}
     record.data["ids"] = {}
+    record.data["reopened"] = []
     record.data["state"] = "undone"
     record.data["groups_done"] = 0
     record.save()

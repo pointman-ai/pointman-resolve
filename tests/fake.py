@@ -108,6 +108,23 @@ class Item(Obj):
         self.enabled = on
         return True
 
+    def SetSpeed(self, opts):
+        """As Resolve: the clip's length is its source length over the speed, cut down to whole frames, and
+        with RippleTimeline everything starting after the clip's start moves by the difference, markers too."""
+        self._w("SetSpeed")
+        src = getattr(self, "speed_src", None) or self.frames
+        self.speed_src = src
+        new = int(src * 100.0 / opts["Percentage"])
+        d, start = new - self.frames, self.start
+        self.frames = new
+        if opts.get("RippleTimeline"):
+            for items in self.tl.tracks.values():
+                for it in items:
+                    if it is not self and it.start > start:
+                        it.start += d
+            self.tl.markers = {(f + d if self.tl.start + f > start else f): m for f, m in self.tl.markers.items()}
+        return True
+
     def AddMarker(self, frame, color, name, note, duration, custom=""):
         self._w("AddMarker")
         if int(frame) in self.markers or not 0 <= int(frame) < self.frames:
@@ -146,6 +163,20 @@ class Timeline(Obj):
         return self.serial
 
     def GetCurrentTimecode(self): return self.playhead
+    def GetSetting(self, name): return {"timelineFrameRate": "25"}.get(name, "")
+
+    def AddTrack(self, kind, sub=None):
+        if not self.writable:
+            raise AssertionError("AddTrack reached Resolve")
+        self.tracks[(kind, self.GetTrackCount(kind) + 1)] = []
+        return True
+
+    def DeleteTrack(self, kind, i):
+        if not self.writable:
+            raise AssertionError("DeleteTrack reached Resolve")
+        if self.tracks.get((kind, i)):
+            return False
+        return self.tracks.pop((kind, i), None) is not None
 
     def GetName(self): return "Stage 1 · silences out"
     def GetUniqueId(self): return "tl-1"

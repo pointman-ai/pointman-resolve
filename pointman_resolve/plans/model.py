@@ -204,6 +204,15 @@ class Model:
         self.markers = {(f - d if f >= e else f): m for f, m in self.markers.items() if not (s <= f < e)}
         self.end -= d
 
+    def reopen(self, s: int, d: int) -> None:
+        """The undo of ripple(s, s + d): everything from s on moves d later again, markers too."""
+        for key in self.tracks:
+            self.tracks[key] = [({**p, "record": p["record"] + d} if p["record"] >= s else p) for p in self.tracks[key]]
+            self.transitions[key] = [({**t, "record": t["record"] + d} if t["record"] >= s else t)
+                                     for t in self.transitions.get(key, [])]
+        self.markers = {(f + d if f >= s else f): mk for f, mk in self.markers.items()}
+        self.end += d
+
     # ---------------------------------------------------------------- reading it back
 
     def frame_map(self, key: tuple, s: int, e: int) -> list:

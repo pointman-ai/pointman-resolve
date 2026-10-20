@@ -17,6 +17,7 @@ For agents changing a DaVinci Resolve timeline. Skip it otherwise.
 - Crop, Pan and Tilt are Resolve units, not pixels: one unit is 2 px on a 1920×1080 timeline. Measure other sizes before you trust a formula.
 - After any change to position, zoom, crop, colour or transitions, look at Resolve's own frame, not only a shadow render: `resolve_frame_check` does it with the playhead guard and shows where the two differ.
 - After any cut or move, check frame by frame that stacked pieces still follow the clip under them.
+- A transition (a flip, a glitch, a full-screen card wiping in or out) must cover the cuts beneath it. Each cut goes under the transition's opaque frames: not on its first or last see-through frame, and not a few frames before it starts or after it ends. Move your transition, not the person's cut. Confirm it by stepping through Resolve's frames across the transition, one by one.
 
 **Keep the timeline clean.**
 - One clip per continuous run of source: join the through-edits you make.

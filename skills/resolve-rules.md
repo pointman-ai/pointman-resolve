@@ -71,6 +71,17 @@ and `CHANGELOG.md` describe 21.x. README.txt is from 2024 and misses things like
   through mid-dissolve. Dissolve the background and hard-cut the overlay.
 - `SetFades({"FadeIn": n, "FadeOut": n})` fades a clip's start or end, in frames. Use it where a dissolve
   has no clip to dissolve to.
+- **A transition has to cover the cuts beneath it.** A full-screen card that wipes in over 7 frames, placed
+  just as the camera under it cut to another shot, showed the switch through the wipe ("the transition
+  doesn't actually cover the camera cut in the background"). To check one:
+  1. Measure its opacity per frame from the file's alpha (`ffmpeg -i card.mov -vf extractplanes=a …`, the
+     minimum over the frame). Opaque frames hide everything beneath; a flip may be opaque for one frame only.
+  2. List every cut on the tracks below it (a clip starting or ending; through-edits don't count) and skip
+     those hidden by an opaque clip lower down.
+  3. A cut is seen if the frames on both sides of it show the background: on the transition's first or last
+     frame, during the wipe, or just before it starts or after it ends. Move the transition so the cut lands
+     on its opaque frames; the person's cut stays where it is.
+  4. Look at Resolve's own frames across it, one by one, after every re-cut.
 
 ## Background jobs
 

@@ -123,7 +123,9 @@ def make(resolve, snap: dict, plan: dict, name: str, record: plan_apply.Record, 
         copy_snap, _ = take(ReadOnly(resolve))
         version_plan = rewrite(plan, match_ids(snap, copy_snap))
         out = plan_apply.apply(resolve, copy_snap, version_plan, record, media=media, sleep=sleep, wait=wait)
-        left = sorted((it["id"], it["record"], it["frames"]) for it in take(ReadOnly(resolve))[0]["items"])
+        copy_after, _ = take(ReadOnly(resolve))          # the copy as it is: the A/B's bottom row is drawn from this
+        left = sorted((it["id"], it["record"], it["frames"]) for it in copy_after["items"])
+        out["copy_snapshot"] = copy_after
         reg = load()
         reg[dup.GetUniqueId()]["left"] = left            # what we left it as: drop() refuses once it's been edited
         save(reg)

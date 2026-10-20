@@ -38,7 +38,7 @@ from . import markers, media
 from .plans import apply as plan_apply
 from .plans import store as plan_store
 from .plans import versions as plan_versions
-from .plans.compile import compile_plan
+from .plans.compile import compile_plan, ripples_of, to_base, to_final
 from .plans.model import Model, clock
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
 from .timeline import check as timeline_check
@@ -737,9 +737,10 @@ def preview_cmd(job):
 
 
 def render_previews(job, pid: str, base: dict, saved: dict, *, limit: int = 4, pad: float = 1.0,
-                    version: str | None = None) -> tuple[list, int]:
+                    version: str | None = None, copy: dict | None = None) -> tuple[list, int]:
     """Each op's span drawn from the sources, before above after, posted where the request asked. With
-    `version`: the person's timeline above, the version below (the A/B of resolve.version)."""
+    `version` and `copy` (the version's own snapshot): the person's timeline above, the version as it really
+    is below, each span mapped onto that timeline (the A/B of resolve.version)."""
     plan = {"id": pid, "ops": saved["ops"]}
     compiled = compile_plan(base, plan, media=saved.get("media") or {})
     if compiled["problems"]:
@@ -748,12 +749,20 @@ def render_previews(job, pid: str, base: dict, saved: dict, *, limit: int = 4, p
     pad = int(pad * fps)
     work = Path(job.work)
     out = []
+    ripples = ripples_of(compiled["groups"])
     for i, g in enumerate(compiled["groups"][:limit]):
-        upto = compile_plan(base, plan, media=saved.get("media") or {}, upto=i + 1)["model"]
-        before_snap = base if i == 0 else after_snapshot(base, compile_plan(base, plan, media=saved.get("media") or {},
-                                                                             upto=i)["model"])
-        after_snap = after_snapshot(base, upto)
         (b0, b1), (a0, a1) = preview_span(g, fps, pad)
+        if copy is not None:                             # both rows from real timelines, not the plan's model
+            before_snap, after_snap = base, copy
+            b0, b1 = to_base(b0, i, ripples), to_base(b1, i, ripples, end=True)
+            a0, a1 = to_final(a0, i, ripples), to_final(a1, i, ripples)
+            if a1 <= a0:
+                a1 = a0 + 1
+        else:
+            upto = compile_plan(base, plan, media=saved.get("media") or {}, upto=i + 1)["model"]
+            before_snap = base if i == 0 else after_snapshot(base, compile_plan(base, plan, media=saved.get("media") or {},
+                                                                                 upto=i)["model"])
+            after_snap = after_snapshot(base, upto)
         rb = timeline_render.render(before_snap, b0, b1, work / f"op{i + 1}-before.mp4", width=640)
         ra = timeline_render.render(after_snap, a0, a1, work / f"op{i + 1}-after.mp4", width=640)
         if not (rb["ok"] and ra["ok"]):
@@ -896,8 +905,9 @@ def version_cmd(job):
     except (plan_apply.Stop, ValueError) as e:
         return {"plan": pid, "ok": False, "stopped": str(e), "version": record.data.get("version"),
                 "log": record.data.get("log", [])[-10:]}
+    copy = out.pop("copy_snapshot", None)
     try:                                                  # the A/B: what changed, his above, the version below
-        ab, _ = render_previews(job, pid, base, saved, limit=int(p.get("limit", 4)), version=out["version"])
+        ab, _ = render_previews(job, pid, base, saved, limit=int(p.get("limit", 4)), version=out["version"], copy=copy)
     except Exception as e:  # noqa: BLE001 - the version is made either way
         ab = [{"error": f"the A/B render failed: {e}"}]
     return {"plan": pid, "ok": True, **out, "ab": ab, "warnings": record.data.get("warnings", []),

@@ -65,3 +65,14 @@ def test_drop_only_an_unedited_version_that_isnt_open(tmp_path):
 def test_a_taken_name_gets_a_number(tmp_path):
     tl, resolve, rec, out = made(tmp_path, {"ops": [{"op": "set", "items": ["v3a"], "color": "Orange"}]})
     assert V.free_name(resolve.pm.project, "Stage 1 · v2") == "Stage 1 · v2 (2)"
+
+
+def test_spans_map_onto_the_timeline_before_the_plan_and_after_it():
+    from pointman_resolve.plans.compile import to_base, to_final
+    ripples = [(0, 150, 160), (1, 30, 60)]                    # a cut's ranges, the last one first
+    # group 1 (30–60) saw 150–160 already cut, so its frame 100 was 100 then too (before the 150 cut)
+    assert to_base(100, 1, ripples) == 100 and to_base(170, 1, ripples) == 180
+    assert to_base(150, 1, ripples, end=True) == 150          # an end at the cut stays before its gap
+    # group 0 (150–160) left frame 170; the later cut at 30–60 pulls it 30 earlier
+    assert to_final(170, 0, ripples) == 140 and to_final(45, 0, ripples) == 30 and to_final(10, 0, ripples) == 10
+    assert to_final(170, 1, ripples) == 170                   # nothing was cut after group 1

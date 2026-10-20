@@ -36,6 +36,8 @@ from . import markers, media
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
 from .timeline import check as timeline_check
 from .timeline import framecheck
+from .timeline import gap as timeline_gap
+from .timeline import journal
 from .timeline import qc as timeline_qc
 from .timeline import diff as timeline_diff
 from .timeline import render as timeline_render
@@ -509,6 +511,30 @@ def frame_check(job):
             f"Frame check at {got['timecode']}: Resolve | shadow render | difference. PSNR {cmp['psnr']} dB"
             + (f", differs in {cmp['diff_box']}" if cmp["diff_box"] else "")))
     return result
+
+
+@ext.command("resolve.insert_gap")
+def insert_gap(job):
+    """Open a gap of `frames` at `at` on every track: everything starting there or later, and the timeline's
+    markers, move later (a negative `frames` closes a gap). Resolve has no insert; a temporary clip's rippling
+    speed change does it (timeline/gap.py). Waits for the timeline to be still."""
+    try:
+        raw = bridge.connect()
+    except ResolveUnavailable as e:
+        raise unavailable(e) from None
+    project = raw.GetProjectManager().GetCurrentProject()
+    tl = project.GetCurrentTimeline() if project else None
+    if tl is None:
+        raise Retry("no timeline open in Resolve")
+    fps = float(tl.GetSetting("timelineFrameRate") or 25)
+    at, frames = timeline_render.parse_time(job.params["at"], fps), int(job.params["frames"])
+    try:
+        got = timeline_gap.insert(project.GetMediaPool(), tl, at, frames, wait=float(job.params.get("wait", 3)))
+    except framecheck.Busy as e:
+        raise Retry(str(e)) from None
+    journal.record("resolve.insert_gap", timeline=tl.GetUniqueId(), note=f"{frames:+d} frames at {at}")
+    project.SaveProject()
+    return {**got, "undo": {"at": at, "frames": -frames}}
 
 
 @ext.command("resolve.calibrate")

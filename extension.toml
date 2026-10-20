@@ -5,7 +5,7 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.6.12"
+version = "0.6.13"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
 node = ">=0.1,<1"
@@ -139,6 +139,13 @@ ready_when = "connected"
 outputs = ["image"]
 
 [[commands]]
+kind = "resolve.insert_gap"
+title = "Insert (or close) a gap on every track"
+params = { type = "object", required = ["at", "frames"], properties = { at = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'. Everything starting here or later moves." }, frames = { type = "integer", description = "Frames to insert; negative closes a gap (nothing may start inside it)." }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still first." } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
 kind = "resolve.calibrate"
 title = "Measure Crop/Pan/Tilt px per unit"
 params = { type = "object", properties = { frame = { type = ["string", "integer"], description = "A frame with a moved or cropped clip; picked from the timeline if left out." }, dry_run = { type = "boolean", default = false }, wait = { type = "number", default = 3 }, thread_id = { type = "integer", description = "Post the comparison image in this thread." } }, additionalProperties = false }
@@ -194,6 +201,12 @@ description = "connected (and why not), Resolve's version, the page, the open pr
 [[files]]
 extensions = [".drp"]
 open_with = "DaVinci Resolve"
+
+[[tools]]
+name = "resolve_insert_gap"
+command = "resolve.insert_gap"
+description = "Open a gap of `frames` at `at` on every track at once (Resolve's API has no insert): everything starting there or later, and the timeline markers, move later, and a clip that only crosses `at` keeps playing over the gap. A negative `frames` closes a gap. Done with a temporary clip's rippling speed change, so nothing is re-laid and grades stay. Waits for the timeline to be still; checks the end moved by exactly `frames`. Returns the undo (`at`, `-frames`). Fill the gap after (run clips on from their source, hold a card) and move any transition to the new cut."
+returns = "result"
 
 [[tools]]
 name = "resolve_frame_check"

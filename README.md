@@ -130,12 +130,15 @@ data, so they can follow it without watching your screen.
   `ours` lists what our own tools did, from `~/.pointman-resolve/journal.jsonl`.
 - **Units** (Resolve 21.1): `in` is `GetLeftOffset`, the in-point in timeline frames, and it matched
   Resolve's OTIO on every item. `src_start` is seconds on the media's own timecode. Pan, tilt and crops
-  are in Resolve's units, not pixels, counted across the clip's *fitted image*: 960 units across its width
-  (Pan, CropLeft/Right) and 540 down its height (Tilt, CropTop/Bottom). A 16:9 source on a 1920x1080
-  timeline fills the frame, so a unit is 2 px; a 1728x1116 screen recording fits to 1672 px wide, so its
-  Pan unit is 1.74 px (measured with `resolve.frame_check`). `resolve.calibrate` measures the timeline's
-  own size, and a snapshot carries it as `timeline.px_per_unit` (`null` if not measured; 2 is assumed). OTIO stores them as a fraction of the whole frame: Pan and
-  CropLeft/Right ÷ 960 units (= ÷ width), Tilt and CropTop/Bottom ÷ 540 (= ÷ height).
+  are in Resolve's units, not pixels. Pan and Tilt count across the clip's *fitted image*: 960 units across
+  its width and 540 down its height. A 16:9 source on a 1920x1080 timeline fills the frame, so a unit is
+  2 px; a 1728x1116 screen recording fits to 1672 px wide, so its Pan unit is 1.74 px (measured with
+  `resolve.frame_check`). Crops are timeline pixels before the zoom, 2 px a unit whatever the source's shape:
+  on that recording CropRight 471.7 put the edge at x 780, not the 960 that fitted shares would give
+  (measured with `resolve.frame_check`). `resolve.calibrate` measures the timeline's
+  own size, and a snapshot carries it as `timeline.px_per_unit` (`null` if not measured; 2 is assumed). OTIO stores them as units ÷ 960 (Pan,
+  CropLeft/Right) and ÷ 540 (Tilt, CropTop/Bottom): for a crop that's a fraction of the timeline's width or
+  height, for Pan and Tilt a fraction of the fitted image's.
 - From a shell: `python -m pointman_resolve.timeline.cli snapshot | diff A B | check S`.
 - **Grades** (`timeline/grades.py`): Resolve has `SetCDL` but no `GetCDL`, so a tool that sets a CDL also writes it
   to `~/.pointman-resolve/grades.json` under the clip's unique id: `{"items": {"<id>": {"cdl": {"Slope": "r g b",

@@ -59,6 +59,12 @@ def test_geometry_matches_resolve(media):
     h = R.geometry(item("h", 4, 0, 25, media["screen"], props={"ZoomX": 1.0181481790542601, "Pan": -9.0, "Tilt": 8.0,
                                                                "CropTop": 14.0}), 1920, 1080)
     assert round(h["rect"][0], 1) == 93.0 and round(h["rect"][1], 1) == 2.7
+    # Crop isn't a share of the fitted image: it's u px a unit. The Spacesheep split screen (2026-10-20): CropRight
+    # 471.679 put Resolve's edge at x 780 (frame_check), and 410.817 at 960, mid-screen
+    for crop, edge in ((471.679, 780), (410.817, 960)):
+        sp = R.geometry(item("sp", 4, 0, 25, media["screen"], props={"ZoomX": 1.478148150444031, "Pan": -12.3,
+                                                                     "Tilt": 30.556, "CropRight": crop}), 1920, 1080)
+        assert round(sp["rect"][0] + sp["rect"][2]) == edge
 
 
 def test_hidden_clips_are_not_decoded(media):

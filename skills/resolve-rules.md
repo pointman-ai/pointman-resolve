@@ -100,7 +100,8 @@ and `CHANGELOG.md` describe 21.x. README.txt is from 2024 and misses things like
   `at`, like a card, keeps playing over the gap.
 - Then fill it: run the clips that end at `at` on from their own source (check the voice there is silent),
   hold or extend the card, and move a transition on the old cut to the new one. Close it again with a negative
-  `frames`.
+  `frames` (it refuses if anything starts in the gap or a timeline marker sits in it).
+- Untested: what the ripple does to clips on a locked track. Check the result if any track is locked.
 
 ## Background jobs
 

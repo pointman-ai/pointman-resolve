@@ -136,8 +136,9 @@ data, so they can follow it without watching your screen.
   `resolve.frame_check`). Crops are timeline pixels before the zoom, 2 px a unit whatever the source's shape:
   on that recording CropRight 471.7 put the edge at x 780, not the 960 that fitted shares would give
   (measured with `resolve.frame_check`). `resolve.calibrate` measures the timeline's
-  own size, and a snapshot carries it as `timeline.px_per_unit` (`null` if not measured; 2 is assumed). OTIO stores them as a fraction of the whole frame: Pan and
-  CropLeft/Right ÷ 960 units (= ÷ width), Tilt and CropTop/Bottom ÷ 540 (= ÷ height).
+  own size, and a snapshot carries it as `timeline.px_per_unit` (`null` if not measured; 2 is assumed). OTIO stores them as units ÷ 960 (Pan,
+  CropLeft/Right) and ÷ 540 (Tilt, CropTop/Bottom): for a crop that's a fraction of the timeline's width or
+  height, for Pan and Tilt a fraction of the fitted image's.
 - From a shell: `python -m pointman_resolve.timeline.cli snapshot | diff A B | check S`.
 - **Grades** (`timeline/grades.py`): Resolve has `SetCDL` but no `GetCDL`, so a tool that sets a CDL also writes it
   to `~/.pointman-resolve/grades.json` under the clip's unique id: `{"items": {"<id>": {"cdl": {"Slope": "r g b",

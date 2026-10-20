@@ -154,6 +154,14 @@ Resolve's own values (`GetProperties` keys): Crop, Pan and Tilt in Resolve units
   out is laid again. Undo refuses to touch a clip that isn't the plan's own or the snapshot's.
 - **Preview** (`resolve.preview`): the shadow render before and after each op.
 
+- **Versions** (`resolve.version`, PFE-12): for a whole-cut change the person wants to compare, the plan
+  goes onto a copy of their timeline (`DuplicateTimeline` keeps grades, Fusion, transitions and markers;
+  an OTIO round trip would drop grades), never onto theirs. While it's made, Resolve shows the copy, so it
+  needs `ok`: what asked for it. The person is then put back on their timeline, page and playhead. Their
+  clip selection can't be set back, so a change to it is reported. They switch between the two to A/B.
+  `resolve.drop_version` deletes a copy, but only when it isn't open and nobody has edited it. The marker
+  watcher skips copies (`versions.json`), since a copy holds every @ marker of the original.
+
 Plans live in `~/.pointman-resolve/plans/<id>/`: `plan.json`, `compiled.json` (every step) and
 `applied.json`. Every apply and undo is in the journal, so diffs and follow mode can tell them from the
 person's own edits.

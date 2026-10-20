@@ -37,6 +37,7 @@ except ImportError:                 # a node from before the rename (thread 2255
 from . import markers, media
 from .plans import apply as plan_apply
 from .plans import store as plan_store
+from .plans import versions as plan_versions
 from .plans.compile import compile_plan
 from .plans.model import Model, clock
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
@@ -849,6 +850,53 @@ def apply_cmd(job):
     return {**result, **{k: v for k, v in out.items() if k not in result}}
 
 
+@ext.command("resolve.version")
+def version_cmd(job):
+    """A plan from resolve.plan applied to a copy of the open timeline, for the person to A/B: theirs stays as
+    it was, and they're put back on it (timeline, page, playhead). Only when they asked for it (`ok`)."""
+    p = job.params
+    if not str(p.get("ok") or "").strip():
+        raise RuntimeError("a version switches timelines while it's made, so it needs the person's ok: say what "
+                           "asked for it in `ok`")
+    pid = str(p.get("plan") or "")
+    saved = plan_store.load(pid)
+    if saved.get("problems"):
+        raise RuntimeError("the plan has problems: " + "; ".join(saved["problems"]))
+    raw, ro, project, tl = open_timeline()
+    if tl.GetUniqueId() != saved["timeline"]["id"]:
+        raise RuntimeError(f"Resolve has {tl.GetName()!r} open; the plan is for {saved['timeline']['name']!r}")
+    try:
+        framecheck.idle(tl, float(p.get("wait", 3)))
+    except framecheck.Busy as e:
+        raise Retry(str(e)) from None
+    base = read(timeline_snapshot.write(ro, timeline_snapshot.store_dir(project.GetName(), tl.GetName()), otio=False))
+    plan = {"id": pid, "ops": saved["ops"], "note": saved.get("note")}
+    record = plan_apply.Record(plan_store.folder(pid) / "version.json")
+    name = str(p.get("name") or f"{tl.GetName()} · v · {(saved.get('note') or pid)[:40]}")
+    try:
+        out = plan_versions.make(raw, base, plan, name, record, media=saved.get("media") or {})
+    except (plan_apply.Stop, ValueError) as e:
+        return {"plan": pid, "ok": False, "stopped": str(e), "version": record.data.get("version"),
+                "log": record.data.get("log", [])[-10:]}
+    return {"plan": pid, "ok": True, **out, "warnings": record.data.get("warnings", []),
+            "compare": "switch between the two timelines in Resolve; resolve.drop_version deletes the copy"}
+
+
+@ext.command("resolve.drop_version")
+def drop_version_cmd(job):
+    """Delete a version made by resolve.version: not while it's open, and not once anyone has edited it."""
+    pid = str(job.params.get("plan") or "")
+    record = plan_apply.Record(plan_store.folder(pid) / "version.json")
+    v = record.data.get("version")
+    if not v:
+        return {"plan": pid, "ok": True, "note": "no version of this plan was made"}
+    raw, ro, project, tl = open_timeline()
+    try:
+        return {"plan": pid, "ok": True, **plan_versions.drop(raw, v["id"])}
+    except plan_apply.Stop as e:
+        return {"plan": pid, "ok": False, "stopped": str(e)}
+
+
 @ext.command("resolve.undo")
 def undo_cmd(job):
     """Put back what a plan changed: everything it placed or moved goes, the snapshot's clips come back with
@@ -1104,6 +1152,8 @@ def watch_markers() -> None:
     if not project or not tl:
         return
     state, tid = marker_state(), tl.GetUniqueId()
+    if plan_versions.is_version(tid):                   # a copy we made (PFE-12): its markers are the original's
+        return
     name, pid = project.GetName(), project.GetUniqueId()
     known = marker_projects()
     known.see(name, pid, tid)

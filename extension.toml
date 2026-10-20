@@ -187,6 +187,20 @@ lane = "resolve"
 ready_when = "connected"
 
 [[commands]]
+kind = "resolve.version"
+title = "Make a version of the timeline from a plan"
+params = { type = "object", required = ["plan", "ok"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, ok = { type = "string", description = "What asked for a version (the person's post or marker): it switches timelines while it's made." }, name = { type = "string" }, wait = { type = "number", default = 3 } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
+kind = "resolve.drop_version"
+title = "Delete a version"
+params = { type = "object", required = ["plan"], properties = { plan = { type = "string" } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
 kind = "resolve.undo"
 title = "Undo an edit plan"
 params = { type = "object", required = ["plan"], properties = { plan = { type = "string" }, wait = { type = "number", default = 3 } }, additionalProperties = false }
@@ -237,6 +251,18 @@ description = "Draw a plan from resolve_plan before it's applied: for each op, t
 name = "resolve_apply"
 command = "resolve.apply"
 description = "Apply a plan from resolve_plan to the open timeline: only while it's been still for `wait` seconds and only if a fresh dry run gives the same steps (otherwise it returns a new dry run). Every clip is checked before it's touched and read back after it's placed; settings, fades, colour, grades (CopyGrades) and centred dissolves are kept. Stops, saying why and what was done, if Resolve or the person gets in the way. Verifies the result. Never saves, switches timelines or starts a background job. resolve_undo puts it back."
+returns = "result"
+
+[[tools]]
+name = "resolve_version"
+command = "resolve.version"
+description = "For a whole-cut change the person wants to compare: apply a plan from resolve_plan to a COPY of the open timeline (DuplicateTimeline keeps grades, Fusion, transitions and markers), not to theirs. Their timeline stays as it was, and they're put back on it with their page and playhead. They switch between the two in Resolve to A/B. Needs `ok`: what asked for it, since a timeline switch shows while it's made. resolve_drop_version deletes the copy."
+returns = "result"
+
+[[tools]]
+name = "resolve_drop_version"
+command = "resolve.drop_version"
+description = "Delete the version a plan made with resolve_version: never while it's open, and never once anyone has edited it."
 returns = "result"
 
 [[tools]]

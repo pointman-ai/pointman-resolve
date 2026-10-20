@@ -159,6 +159,7 @@ class Timeline(Obj):
     def __init__(self, tracks, markers=None, start=90000, names=None):
         self.tracks, self.markers, self.start = tracks, markers or {}, start  # {("video", 1): [Item]}
         self.names, self.writable, self.busy, self.serial, self.playhead = names or {}, False, 0, 0, "01:00:00:00"
+        self.name, self.uid, self.project = "Stage 1 · silences out", "tl-1", None
         for items in tracks.values():
             for it in items:
                 it.tl = self
@@ -175,6 +176,7 @@ class Timeline(Obj):
         self.playhead = tc
         return True
     def GetSetting(self, name): return {"timelineFrameRate": "25"}.get(name, "")
+    def GetSelectedClips(self): return list(getattr(self, "selected", []))
 
     def AddTrack(self, kind, sub=None):
         if not self.writable:
@@ -189,8 +191,29 @@ class Timeline(Obj):
             return False
         return self.tracks.pop((kind, i), None) is not None
 
-    def GetName(self): return "Stage 1 · silences out"
-    def GetUniqueId(self): return "tl-1"
+    def GetName(self): return self.name
+    def GetUniqueId(self): return self.uid
+
+    def DuplicateTimeline(self, name):
+        """A copy with every clip under a new id, as a new timeline of the project (not made current)."""
+        if not self.writable:
+            raise AssertionError("DuplicateTimeline reached Resolve")
+        if self.project and any(x.name == name for x in self.project.timelines):
+            return None
+        tracks = {}
+        for key, items in self.tracks.items():
+            tracks[key] = []
+            for it in items:
+                c = Item(f"d{self.next()}-{it.uid}", it.start, it.frames, it.left, it.media, type=it.type,
+                         props=dict(it.props), fades=dict(it.fades), speed=dict(it.speed), markers=dict(it.markers),
+                         nodes=it.nodes, name=it.name)
+                c.src, c.color, c.enabled, c.tools = it.src, it.color, it.enabled, dict(it.tools)
+                tracks[key].append(c)
+        dup = Timeline(tracks, {f: dict(m) for f, m in self.markers.items()}, start=self.start, names=dict(self.names))
+        dup.name, dup.uid, dup.writable, dup.project = name, f"tl-{self.next() + 100}", True, self.project
+        if self.project:
+            self.project.timelines.append(dup)
+        return dup
     def GetSettings(self): return {"timelineFrameRate": "25", "timelineResolutionWidth": "1920",
                                    "timelineResolutionHeight": "1080"}
     def GetStartFrame(self): return self.start
@@ -304,6 +327,13 @@ class MediaPool(Obj):
         self.tl = tl
         self.extra = []
 
+    def DeleteTimelines(self, timelines):
+        project = self.tl.project
+        if not self.tl.writable or project is None:
+            raise AssertionError("DeleteTimelines reached Resolve")
+        project.timelines[:] = [x for x in project.timelines if x not in timelines]
+        return True
+
     def GetRootFolder(self):
         seen = {}
         for v in self.tl.tracks.values():
@@ -351,8 +381,20 @@ class Project(Obj):
     def __init__(self, tl):
         self.tl = tl
         self.pool = MediaPool(tl)
+        self.timelines = [tl]
+        tl.project = self
 
     def GetMediaPool(self): return self.pool
+    def GetTimelineCount(self): return len(self.timelines)
+    def GetTimelineByIndex(self, i): return self.timelines[i - 1] if 1 <= i <= len(self.timelines) else None
+
+    def SetCurrentTimeline(self, tl):
+        if not tl.writable:
+            raise AssertionError("SetCurrentTimeline reached Resolve")
+        if tl not in self.timelines:
+            return False
+        self.tl, self.pool.tl = tl, tl
+        return True
 
     def GetName(self): return "feat-flow-with-spacesheep"
     def GetUniqueId(self): return "pr-1"

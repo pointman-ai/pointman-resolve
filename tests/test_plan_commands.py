@@ -69,7 +69,6 @@ def test_a_plan_with_problems_says_so_and_wont_apply(tmp_path):
         n.close()
 
 
-
 def test_watch_runs_the_checks_on_demand(tmp_path):
     n = start(tmp_path, read_posts=False, standin=STANDIN)
     try:
@@ -80,5 +79,21 @@ def test_watch_runs_the_checks_on_demand(tmp_path):
         state, r = n.command("resolve.watch", {"transitions": False}, "watch-1")
         assert state == "done" and r["result"]["configured"], r
         assert r["result"]["roles"]["cutout"] == "V5" and isinstance(r["result"]["findings"], list)
+    finally:
+        n.close()
+
+
+def test_a_version_needs_ok_and_leaves_the_timeline_as_it_was(tmp_path):
+    n = start(tmp_path, read_posts=False, standin=STANDIN)
+    try:
+        state, r = n.command("resolve.plan", {"ops": [{"op": "slip", "items": ["v3a"], "by": 2}]}, "plan-v")
+        pid = r["result"]["plan"]
+        state, r = n.command("resolve.version", {"plan": pid, "ok": "", "wait": 0.1}, "v-no")
+        assert state == "failed" and "person's ok" in json.dumps(r)
+        state, r = n.command("resolve.version", {"plan": pid, "ok": "James, post 15400", "wait": 0.1}, "v-1")
+        assert state == "done" and r["result"]["ok"] and r["result"]["back"]["timeline"], r
+        assert lane(n, "video", 3)[0][2] == 10                       # the open timeline (his) didn't change
+        state, r = n.command("resolve.drop_version", {"plan": pid}, "v-drop")
+        assert state == "done" and r["result"]["ok"] and r["result"]["dropped"].startswith("Stage 1"), r
     finally:
         n.close()

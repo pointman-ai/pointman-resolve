@@ -290,3 +290,8 @@ def test_recorded_cdls_follow_a_relaid_clip_and_decide_joins(tmp_path):
     assert not compile_plan(snap_of(tl2), {"ops": [{"op": "join", "items": ["k1", "k2"]}]})["problems"]
     grades.record("k2", {**cdl, "Slope": "0.9 1 1.1"}, by="by hand")
     assert "recorded for its pieces differ" in compile_plan(snap_of(tl2), {"ops": [{"op": "join", "items": ["k1", "k2"]}]})["problems"][0]
+    # a node added by hand on one piece: refused even with matching records (a record is what our tool set)
+    grades.record("k2", cdl, by="cutout_look.py")
+    b.tools = {1: ["Primary Balance"], 2: ["Qualifier"]}
+    b.nodes = 2
+    assert "their grades differ" in compile_plan(snap_of(tl2), {"ops": [{"op": "join", "items": ["k1", "k2"]}]})["problems"][0]

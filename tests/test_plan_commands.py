@@ -93,6 +93,11 @@ def test_a_version_needs_ok_and_leaves_the_timeline_as_it_was(tmp_path):
         state, r = n.command("resolve.version", {"plan": pid, "ok": "James, post 15400", "wait": 0.1}, "v-1")
         assert state == "done" and r["result"]["ok"] and r["result"]["back"]["timeline"], r
         assert lane(n, "video", 3)[0][2] == 10                       # the open timeline (his) didn't change
+        assert r["result"]["version"].startswith("Stage 1 · silences out · v2")
+        state, r = n.command("resolve.version", {"plan": pid, "ok": "again", "wait": 0.1}, "v-2")
+        assert state == "failed" and "already has a version" in json.dumps(r)
+        state, r = n.command("resolve.undo", {"plan": pid, "wait": 0.1}, "v-undo")   # undo knows nothing was applied
+        assert state == "done" and "nothing of this plan was applied" in r["result"]["note"], r
         state, r = n.command("resolve.drop_version", {"plan": pid}, "v-drop")
         assert state == "done" and r["result"]["ok"] and r["result"]["dropped"].startswith("Stage 1"), r
     finally:

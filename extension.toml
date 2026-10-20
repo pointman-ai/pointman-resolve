@@ -189,7 +189,7 @@ ready_when = "connected"
 [[commands]]
 kind = "resolve.version"
 title = "Make a version of the timeline from a plan"
-params = { type = "object", required = ["plan", "ok"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, ok = { type = "string", description = "What asked for a version (the person's post or marker): it switches timelines while it's made." }, name = { type = "string" }, wait = { type = "number", default = 3 } }, additionalProperties = false }
+params = { type = "object", required = ["plan", "ok"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, ok = { type = "string", description = "What asked for a version (the person's post or marker): it switches timelines while it's made." }, name = { type = "string" }, limit = { type = "integer", default = 4, description = "Ops drawn in the A/B." }, wait = { type = "number", default = 3 }, thread_id = { type = "integer" } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 

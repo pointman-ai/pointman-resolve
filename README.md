@@ -158,6 +158,33 @@ Plans live in `~/.pointman-resolve/plans/<id>/`: `plan.json`, `compiled.json` (e
 `applied.json`. Every apply and undo is in the journal, so diffs and follow mode can tell them from the
 person's own edits.
 
+## Watching the cut
+
+`resolve.watch` (tool `resolve_watch`), and the same checks by themselves (PFE-13). Once the person has paused
+for 15 s and the cut has changed since the last check, the agents' tracks are checked against it:
+
+| check | what it finds | fix in the plan |
+|---|---|---|
+| sync | a cutout or loft piece (`<clip>-f<start>…`) showing a camera frame 2+ off the voice under it, less that camera's offset | `slip` by the difference |
+| no cutout | a desktop piece with no cutout over 8+ frames of it | none: it may be meant |
+| orphan cue | a sound with no card or flip starting or ending near it | `delete` |
+| scrap | a picture piece under 8 frames on the agents' tracks | `delete` |
+| see-through | a cut below a full-frame card or flip while it fades (alpha read from the file), or just outside one | none: move the card |
+| chapter | a chapter card (`c01-…`) that an edit took out | none: say so |
+
+What's new since the last post goes to the project's agent in the project's thread, as a document, with a
+dry-run plan for the fixes. The editor previews and applies it, since only the editor changes the timeline. A change
+the person made to the agents' tracks is taken as meant: the checks read the timeline as it is, so nothing is moved
+back. Only projects with a `follow` table in `routes.toml` are watched:
+
+```toml
+[projects."feat-flow-with-spacesheep".follow]
+roles = { flips = "V7" }                  # role -> track; by default from the track names
+offsets = { C0030 = -175.929 }            # voice - camera, seconds, per camera clip
+```
+
+Turn it off with the `watch` setting.
+
 ## Guidance for agents
 
 [SKILLS.md](SKILLS.md) goes into the prompt of every agent woken on a machine where this extension is on

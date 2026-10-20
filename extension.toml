@@ -47,6 +47,12 @@ description = "After the edit changes and the Mac has been idle this long. 0 is 
 minimum = 0
 default = 0
 
+[settings.properties.watch]
+type = "boolean"
+title = "Watch the cut"
+description = "When the person pauses (15 s), check the agents' tracks against the cut: cutouts in sync with the voice, desktops without a cutout, stray cues and scraps, cuts showing through a transition, chapter cards an edit removed. New findings go to the project's agent with a dry-run plan for the mechanical fixes. Only for projects with a `follow` table in routes.toml."
+default = true
+
 [settings.properties.marker_calls]
 type = "boolean"
 title = "Markers call agents"
@@ -154,6 +160,13 @@ ready_when = "connected"
 outputs = ["image"]
 
 [[commands]]
+kind = "resolve.watch"
+title = "Check the agents' tracks against the cut"
+params = { type = "object", properties = { transitions = { type = "boolean", default = true, description = "Also check cuts against transitions (reads the cards' alpha: slower the first time)." } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
 kind = "resolve.plan"
 title = "Dry-run an edit plan"
 params = { type = "object", properties = { plan = { type = "object", description = "{\"note\": \"…\", \"ops\": [...]}: see the tool's description." }, ops = { type = "array", description = "The ops, if not given as plan." }, note = { type = "string" } }, additionalProperties = false }
@@ -201,6 +214,12 @@ returns = "result"
 name = "resolve_set_fallback"
 command = "resolve.set_fallback"
 description = "Where markers from a Resolve project with no route in routes.toml are posted: a board thread, and the agent @pm means there. By default it's where the last marker from a routed project went. Give thread (and agent) to move it; give neither to see it. Reads and writes a file only."
+returns = "result"
+
+[[tools]]
+name = "resolve_watch"
+command = "resolve.watch"
+description = "Run the watcher's checks on the open timeline now (read-only): cutout and loft pieces off the voice (with the camera offsets in routes.toml's `follow` table), desktop pieces with no cutout, sounds with no card, picture scraps under 8 frames, cuts showing through a transition, chapter cards an edit removed. Returns the findings and a dry-run plan (slips and deletes) for the mechanical fixes."
 returns = "result"
 
 [[tools]]

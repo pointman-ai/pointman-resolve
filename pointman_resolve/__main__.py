@@ -20,6 +20,7 @@ Every Resolve call happens on the "resolve" lane, one thread. Core is reached on
 (core.call): the extension holds no token.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -47,6 +48,7 @@ from .timeline import qc as timeline_qc
 from .timeline import diff as timeline_diff
 from .timeline import render as timeline_render
 from .timeline import snapshot as timeline_snapshot
+from .timeline import watch as timeline_watch
 from .timeline.readonly import ReadOnly
 
 ext = Extension()
@@ -99,6 +101,9 @@ MARK_EVERY = float(os.environ.get("POINTMAN_RESOLVE_MARK_EVERY") or 10)     # te
 MARK_POLL = float(os.environ.get("POINTMAN_RESOLVE_MARK_POLL") or 30)
 # a marker back at its own colour usually means James is undoing: recolour only once he's been idle this long
 HEAL_IDLE = float(os.environ.get("POINTMAN_RESOLVE_HEAL_IDLE") or 10)   # James: 10 s is fine (13661)
+WATCH_EVERY = float(os.environ.get("POINTMAN_RESOLVE_WATCH_EVERY") or 10)
+WATCH_IDLE = float(os.environ.get("POINTMAN_RESOLVE_WATCH_IDLE") or 15)   # he edits in bursts: check in the pauses
+watching: dict = {"end": None}
 
 
 def poll_status() -> None:
@@ -903,6 +908,128 @@ def marker_projects() -> markers.Projects:
     return marks["projects"]
 
 
+# ------------------------------------------------------------ watching the cut (PFE-13 v1)
+
+
+def watch_file() -> Path:
+    return timeline_snapshot.journal.home() / "watch.json"
+
+
+def watch_load() -> dict:
+    try:
+        return json.loads(watch_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def watch_save(data: dict) -> None:
+    p = watch_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    tmp.replace(p)
+
+
+def edit_digest(snap: dict) -> str:
+    """Changes when a clip does: place, length, source, file. Markers don't count."""
+    rows = sorted((str(i.get("id")), i.get("kind"), i.get("track"), i.get("record"), i.get("frames"), i.get("in"),
+                   i.get("file")) for i in snap["items"])
+    return hashlib.sha1(json.dumps(rows, default=str).encode()).hexdigest()
+
+
+def watch_config(project_name: str) -> dict | None:
+    """The project's `follow` table in routes.toml: none, and the project isn't watched."""
+    p = (markers.load_routes().get("projects") or {}).get(project_name) or {}
+    cfg = p.get("follow")
+    return cfg if isinstance(cfg, dict) else ({} if cfg is True else None)
+
+
+def watch_check(ro, project, tl, cfg: dict, mine: dict, *, snap: dict | None = None,
+                transitions: bool = True) -> tuple[dict, list, dict | None]:
+    """The checks on the timeline now; the findings not posted before; a dry-run plan for their fixes."""
+    if snap is None:
+        snap, _ = timeline_snapshot.take(ro)
+    report = timeline_watch.run(snap, cfg, previous_chapters=mine.get("chapters"), transitions=transitions)
+    mine["chapters"], mine["digest"] = report["chapters"], edit_digest(snap)
+    seen = set(mine.get("posted") or [])
+    new = [f for f in report["findings"] if f["key"] not in seen]
+    fixes = [f["fix"] for f in new if f.get("fix")]
+    plan = make_plan(ro, project, tl, {"ops": fixes, "note": f"watch: {len(fixes)} fixes"}) if fixes else None
+    return report, new, plan
+
+
+def watch_post(snap_title: str, project, new: list, plan: dict | None, fps: float, work: Path) -> dict | None:
+    routes = markers.load_routes()
+    routing = markers.route(routes, project.GetName(), None, marker_fallback().get())
+    if not routing["thread"]:
+        ext.log(f"watch: {len(new)} findings in {project.GetName()!r}, but nowhere to post them")
+        return None
+    counts: dict = {}
+    for f in new:
+        counts[f["check"]] = counts.get(f["check"], 0) + 1
+    pid = plan["plan"] if plan and plan.get("ok") else None
+    text = (f"@{routing['mention']} watching {snap_title} while James paused: "
+            + ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+            + (f". The mechanical fixes are plan `{pid}` (dry-run; `resolve_preview`, then `resolve_apply`)." if pid else ".")
+            + (f" The plan has problems: {'; '.join(plan['problems'][:2])}" if plan and plan.get("problems") else ""))
+    work.mkdir(parents=True, exist_ok=True)
+    doc = work / "watch.md"
+    doc.write_text(timeline_watch.markdown({"findings": new}, snap_title, fps, pid), encoding="utf-8")
+    build = media.Build("document", [media.OutFile("document", doc, doc.name, "text/markdown")])
+    return publish(build, project=project_for(project.GetName()), asset_path=f"resolve/{project.GetName()}/{snap_title}/watch",
+                   title=f"{snap_title} watch", caption=text, post={"thread_id": routing["thread"], "text": text})
+
+
+def watch_round() -> None:
+    """Every 10 s: once James has paused 15 s and the cut has changed since the last check, the checks run, and
+    what's new goes to the project's agent with a plan for the mechanical fixes. Only projects with a `follow`
+    table in routes.toml are watched. Reads only; the plan is a dry run."""
+    if not ext.settings.get("watch", True) or not publishes():
+        return
+    try:
+        raw = bridge.connect()
+    except ResolveUnavailable:
+        return
+    ro = ReadOnly(raw)
+    project = ro.GetProjectManager().GetCurrentProject()
+    tl = project.GetCurrentTimeline() if project else None
+    if not project or not tl:
+        return
+    cfg = watch_config(project.GetName())
+    if cfg is None:
+        return
+    end = tl.GetEndFrame()
+    if hid_idle_seconds() < WATCH_IDLE or watching["end"] != end:
+        watching["end"] = end                             # a pause starts when the timeline stops changing
+        return
+    state = watch_load()
+    mine = state.setdefault(tl.GetUniqueId(), {"posted": [], "chapters": None, "digest": None})
+    snap, _ = timeline_snapshot.take(ro)
+    if edit_digest(snap) == mine.get("digest"):
+        return                                            # checked already, nothing changed since
+    report, new, plan = watch_check(ro, project, tl, cfg, mine, snap=snap)
+    if new:
+        try:
+            watch_post(tl.GetName(), project, new, plan, snap["timeline"].get("fps") or 25,
+                       Path(ext.node.get("work_dir") or tempfile.gettempdir()) / "watch")
+            mine["posted"] = (list(mine.get("posted") or []) + [f["key"] for f in new])[-3000:]
+        except Exception as e:  # noqa: BLE001 - the next pause tries again
+            ext.log(f"watch: couldn't post {len(new)} findings: {e}")
+    watch_save(state)
+
+
+@ext.command("resolve.watch")
+def watch_cmd(job):
+    """The watcher's checks, now, on the open timeline (read-only): every finding, not just new ones, and a
+    dry-run plan for the mechanical fixes."""
+    _, ro, project, tl = open_timeline()
+    cfg = watch_config(project.GetName()) or {}
+    mine = {"posted": [], "chapters": (watch_load().get(tl.GetUniqueId()) or {}).get("chapters")}
+    report, new, plan = watch_check(ro, project, tl, cfg, mine, transitions=job.params.get("transitions", True))
+    return {"findings": report["findings"][:200], "roles": report["roles"], "plan": plan and plan.get("plan"),
+            "plan_problems": plan and plan.get("problems"), "configured": bool(watch_config(project.GetName()) is not None)}
+
+
 def marker_fallback() -> markers.Fallback:
     if marks["fallback"] is None:
         marks["fallback"] = markers.Fallback(state=marker_state(), routes=markers.load_routes())
@@ -1235,6 +1362,7 @@ ext.every(10, poll_status, lane="resolve")
 ext.every(15, sync_markers, lane="resolve")
 ext.every(60, auto_render, lane="resolve")
 ext.every(MARK_EVERY, watch_markers, lane="resolve")
+ext.every(WATCH_EVERY, watch_round, lane="resolve")
 
 if __name__ == "__main__":
     ext.run()

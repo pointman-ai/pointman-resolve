@@ -67,3 +67,18 @@ def test_a_plan_with_problems_says_so_and_wont_apply(tmp_path):
         assert lane(n, "video", 3)[0][2] == 10
     finally:
         n.close()
+
+
+
+def test_watch_runs_the_checks_on_demand(tmp_path):
+    n = start(tmp_path, read_posts=False, standin=STANDIN)
+    try:
+        (n.home / "routes.toml").write_text(
+            '[projects."feat-flow-with-spacesheep"]\nthread = 10399\nagent = "editor"\n'
+            '[projects."feat-flow-with-spacesheep".follow]\nroles = { cutout = "V5", graphics = "V6", voice = "A1" }\n',
+            encoding="utf-8")
+        state, r = n.command("resolve.watch", {"transitions": False}, "watch-1")
+        assert state == "done" and r["result"]["configured"], r
+        assert r["result"]["roles"]["cutout"] == "V5" and isinstance(r["result"]["findings"], list)
+    finally:
+        n.close()

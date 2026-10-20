@@ -522,12 +522,33 @@ def undo(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=t
     rippled = [(j, g["ripple"]["range"]) for j, g in enumerate(groups) if g.get("ripple")
                and (j < finished or (part or {}).get("rippled"))]
     reopened = record.data.setdefault("reopened", [])
+
+    def now(x: int, j: int) -> int:
+        """Where frame x of group j's timeline is on the live one, with every later cut still made."""
+        for i, (s, e) in [r for r in rippled if r[0] > j and r[0] not in reopened]:
+            x = x - (e - s) if x >= e else (s if x >= s else x)
+        return x
+
+    # nothing may cross a cut point that isn't ours: the ripple leaves a crossing clip where it is, over the
+    # re-opened gap, so check them all before anything moves (James dropping a card over one, say)
+    for j, (s, e) in rippled:
+        if j in reopened:
+            continue
+        at = now(s, j)
+        live_lanes = [(kind, k) for kind in ("video", "audio") for k in range(1, (run.tl.GetTrackCount(kind) or 0) + 1)]
+        for key in live_lanes:                         # tracks added since the snapshot too
+            for it in run.items(key):
+                a = it.GetStart() - run.t0
+                if a < at < a + it.GetDuration():
+                    raise Stop(f"{lane(*key)} {it.GetName()} at {clock(a, base.fps)} crosses the cut at {clock(at, base.fps)}, "
+                               "so the cut can't open again under it: nothing was changed. Move it off the cut, or put "
+                               "the cut back by hand")
     for j, (s, e) in reversed(rippled):
         if j not in reopened:
             try:
                 timeline_gap.insert(unwrap(run.pool), unwrap(run.tl), s, e - s,
                                     wait=gap_wait if not reopened else min(gap_wait, 0.5))  # then it's our own moves
-            except timeline_gap.GapError as err:
+            except (timeline_gap.GapError, ValueError) as err:
                 record.data["state"] = "stopped"
                 record.save()
                 raise Stop(f"re-opening the cut at {clock(s, base.fps)} went wrong: {err}") from None
@@ -540,10 +561,11 @@ def undo(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=t
         after.reopen(s, e - s)
     run.playhead = run.tl.GetCurrentTimecode()
 
-    def final(x: int, j: int) -> int:
-        """Frame x as group j saw it, where it is now that every cut before j is open again."""
+    def final(x: int, j: int, *, end: bool = False) -> int:
+        """Frame x as group j saw it, where it is now that every cut before j is open again (an exclusive end
+        at a cut's start stays before the gap)."""
         for i, (s, e) in reversed([r for r in rippled if r[0] < j]):
-            x = x + (e - s) if x >= s else x
+            x = x + (e - s) if (x > s if end else x >= s) else x
         return x
 
     # 2. what each group touched, where it is now: a cut's range on every track (and, below, the whole of
@@ -557,7 +579,7 @@ def undo(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=t
             spans = {base.lane_of(name): v for name, v in g["spans"].items()}
         for key, sps in spans.items():
             for s0, e0 in sps:
-                regions.setdefault(key, []).append([final(s0, j), final(e0, j)])
+                regions.setdefault(key, []).append([final(s0, j), final(e0, j, end=True)])
     for key, spans in regions.items():                 # whole clips of the snapshot's at either edge
         for sp in spans:
             for p in base.overlapping(key, sp[0], sp[1]):

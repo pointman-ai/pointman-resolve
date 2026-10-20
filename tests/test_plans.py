@@ -314,3 +314,24 @@ def test_recorded_cdls_follow_a_relaid_clip_and_decide_joins(tmp_path):
     b.tools = {1: ["Primary Balance"], 2: ["Qualifier"]}
     b.nodes = 2
     assert "their grades differ" in compile_plan(snap_of(tl2), {"ops": [{"op": "join", "items": ["k1", "k2"]}]})["problems"][0]
+
+
+def test_undo_refuses_before_anything_moves_when_a_clip_crosses_a_cut(tmp_path):
+    tl = strip()
+    plan = {"ops": [{"op": "cut", "ranges": [[30, 60]], "fill": FILL, "ok": "James"}]}
+    media = {FILL["video"]: {"fps": 25.0, "frames": 100000}, FILL["audio"]: {"fps": 25.0, "frames": None}}
+    resolve = fake.Resolve(tl)
+    resolve.pm.project.pool.extra = [fake.Media(FILL["video"]), fake.Media(FILL["audio"], fps=0)]
+    snap = snap_of(tl)
+    tl.writable = True
+    rec = A.Record(tmp_path / "applied.json")
+    A.apply(resolve, snap, plan, rec, media=media, sleep=lambda s: None)
+    card = fake.Item("james-card", tl.start + 20, 20, 0, fake.Media("/gfx/card.mov"))   # dropped over the cut at 30
+    card.tl = tl
+    tl.tracks[("video", 3)] = [card]
+    cut = lanes(tl)
+    with pytest.raises(A.Stop, match="crosses the cut at 0:01.20.*nothing was changed"):
+        A.undo(resolve, snap, plan, rec, media=media, sleep=lambda s: None, gap_wait=0)
+    assert lanes(tl) == cut and not rec.data.get("reopened")
+    assert "first frame" in compile_plan(snap, {"ops": [{"op": "cut", "ranges": [[0, 10]], "fill": FILL, "ok": "x"}]},
+                                         media=media)["problems"][0]

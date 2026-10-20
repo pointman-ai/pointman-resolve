@@ -417,6 +417,9 @@ def op_cut(m: Model, op: dict, groups: list[Group], i: int, ctx: dict, upto: int
     ranges = sorted({(int(s), int(e)) for s, e in op.get("ranges") or []}, reverse=True)
     if not ranges or any(s >= e for s, e in ranges):
         raise PlanError("needs \"ranges\": [[start, end], ...], each start before its end")
+    if any(s < 1 for s, _ in ranges):
+        raise PlanError("a cut can't start on the timeline's first frame: undo opens a cut again with a ripple from "
+                        "the frame before it (resolve.insert_gap), so start at frame 1 or later")
     for (s1, e1), (s2, e2) in zip(ranges, ranges[1:]):
         if e2 > s1:
             raise PlanError(f"ranges overlap at {clock(s1, m.fps)}")

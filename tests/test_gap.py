@@ -148,3 +148,13 @@ def test_closing_over_a_marker_or_before_the_first_frame_is_refused():
         gap.insert(pool, tl, 100, -15, wait=0)
     with pytest.raises(ValueError, match="first frame"):
         gap.insert(pool, tl, 0, 15, wait=0)
+
+
+def test_a_stretch_resolve_refuses_leaves_the_playhead_where_it_was(monkeypatch):
+    tl, pool = cut()
+    tl.playhead = "01:00:05:10"                          # frame 135, after `at`: it would move with a real gap
+    monkeypatch.setattr(gap, "_stretch", lambda clip, n, want: False)
+    with pytest.raises(gap.GapError, match="wouldn't make the temporary clip"):
+        gap.insert(pool, tl, 100, 15, wait=0)
+    assert tl.playhead == "01:00:05:10"                  # nothing moved, so neither does the playhead
+    assert lanes(tl)["V1"] == [("a", 0, 100), ("b", 100, 50)]

@@ -8,8 +8,8 @@ markers with them (tried on the Spacesheep cut, 2026-10-20: +15 frames, then bac
   2. SetSpeed stretches that clip to 1 + `frames` with RippleTimeline, so everything starting at `at` or
      later moves `frames` later (a clip that only crosses `at` stays, and keeps playing);
   3. the clip and the track come off again, and the playhead goes back on the picture it was on: AppendToTimeline
-     moves it to the end of the clip it lays, so it goes back where it was, `frames` later if it was at `at` or
-     after (as Resolve's own ripple delete carries it back with the picture: both seen live, 2026-10-21).
+     moves it to the end of the clip it lays, so it goes back where it was, later by what actually moved if it was
+     at `at` or after (as Resolve's own ripple delete carries it back with the picture: both seen live, 2026-10-21).
 
 A negative `frames` closes a gap the same way (a clip of 1 + |frames| sped up to 1 frame), but only if
 nothing starts in [at, at + |frames|), nothing that moves back would land on a clip that stays, and no
@@ -132,7 +132,7 @@ def insert(pool, tl, at: int, frames: int, *, wait: float = 3.0) -> dict:
         if temp is not None:
             tl.DeleteClips([temp], False)
         track_gone = bool(tl.DeleteTrack("video", k))
-        home = _playhead(home, tl, t0, at, frames)
+        home = _playhead(home, tl, t0, at, tl.GetEndFrame() - end)   # by what moved: nothing, if the stretch failed
         if tl.GetCurrentTimecode() != home:
             tl.SetCurrentTimecode(home)
     after = _starts(tl, t0)

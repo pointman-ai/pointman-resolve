@@ -7,7 +7,9 @@ markers with them (tried on the Spacesheep cut, 2026-10-20: +15 frames, then bac
   1. a temporary video track goes on top, and a 1-frame clip on it at `at - 1`;
   2. SetSpeed stretches that clip to 1 + `frames` with RippleTimeline, so everything starting at `at` or
      later moves `frames` later (a clip that only crosses `at` stays, and keeps playing);
-  3. the clip and the track come off again.
+  3. the clip and the track come off again, and the playhead goes back on the picture it was on: AppendToTimeline
+     moves it to the end of the clip it lays, so it goes back where it was, `frames` later if it was at `at` or
+     after (as Resolve's own ripple delete carries it back with the picture: both seen live, 2026-10-21).
 
 A negative `frames` closes a gap the same way (a clip of 1 + |frames| sped up to 1 frame), but only if
 nothing starts in [at, at + |frames|), nothing that moves back would land on a clip that stays, and no
@@ -19,10 +21,11 @@ Untested: clips on locked tracks.
 
 from __future__ import annotations
 
-from .framecheck import Busy, Only, idle  # noqa: F401 - Busy is what idle() raises
+from .framecheck import Busy, Only, idle, timecode  # noqa: F401 - Busy is what idle() raises
 
 TL_CALLS = ("GetStartFrame", "GetEndFrame", "GetCurrentTimecode", "GetTrackCount", "GetItemListInTrack", "GetSetting",
-            "GetMarkers", "AddTrack", "DeleteTrack", "DeleteClips")
+            "GetMarkers", "AddTrack", "DeleteTrack", "DeleteClips",
+            "SetCurrentTimecode")   # only to put the playhead back after AppendToTimeline moves it
 POOL_CALLS = ("AppendToTimeline",)
 
 
@@ -43,12 +46,30 @@ def _starts(tl, t0) -> dict:
     return {it.GetUniqueId(): it.GetStart() - t0 for kind in ("video", "audio") for it in _items(tl, kind)}
 
 
+def _fps(tl) -> float:
+    try:
+        return float(tl.GetSetting("timelineFrameRate") or 25)
+    except (AttributeError, ValueError):
+        return 25.0
+
+
+def _playhead(home: str, tl, t0: int, at: int, frames: int) -> str:
+    """Where the playhead that was at `home` belongs once everything from `at` has moved `frames`: on the same
+    picture. At a rate that isn't whole (drop-frame timecode) it just stays at `home` rather than guess."""
+    fps = _fps(tl)
+    try:
+        h, m, s, f = (int(x) for x in home.replace(";", ":").split(":"))
+        frame = ((h * 60 + m) * 60 + s) * round(fps) + f - t0
+        if frame < at or abs(fps - round(fps)) > 1e-6:
+            return home
+        return timecode(max(at, frame + frames), fps, t0)   # a playhead inside a gap that closes goes to its start
+    except ValueError:
+        return home
+
+
 def _filler(tl, n: int):
     """A media pool item already on the timeline, at the timeline's own rate and at least n frames long."""
-    try:
-        fps = float(tl.GetSetting("timelineFrameRate") or 25)
-    except AttributeError:
-        fps = 25.0
+    fps = _fps(tl)
     for it in _items(tl, "video"):
         mp = it.GetMediaPoolItem()
         if mp and abs(float(mp.GetClipProperty("FPS") or 0) - fps) < 0.01 \
@@ -89,7 +110,7 @@ def insert(pool, tl, at: int, frames: int, *, wait: float = 3.0) -> dict:
         marks = [f for f in (tl.GetMarkers() or {}) if at <= f < at - frames]
         if marks:
             raise ValueError(f"timeline markers in {at}–{at - frames} ({len(marks)}): move them before closing the gap")
-    end, _ = idle(tl, wait)
+    end, home = idle(tl, wait)
     before = _starts(tl, t0)                     # after idle(): an edit before then would make it stale
     n = 1 if frames > 0 else 1 - frames
     filler = _filler(tl, n)
@@ -111,6 +132,9 @@ def insert(pool, tl, at: int, frames: int, *, wait: float = 3.0) -> dict:
         if temp is not None:
             tl.DeleteClips([temp], False)
         track_gone = bool(tl.DeleteTrack("video", k))
+        home = _playhead(home, tl, t0, at, frames)
+        if tl.GetCurrentTimecode() != home:
+            tl.SetCurrentTimecode(home)
     after = _starts(tl, t0)
     moved = tl.GetEndFrame() - end
     wrong = [u for u, s in before.items() if after.get(u) != (s + frames if s >= at else s)]

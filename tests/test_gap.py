@@ -34,8 +34,9 @@ class Clip(fake.Item):
 
 
 class Timeline(fake.Timeline):
-    def GetCurrentTimecode(self):
-        return "01:00:00:00"
+    def SetCurrentTimecode(self, tc):
+        self.playhead = tc
+        return True
 
     def AddTrack(self, kind):
         self.tracks[(kind, self.GetTrackCount(kind) + 1)] = []
@@ -63,6 +64,7 @@ class Pool(fake.Obj):
                      timeline=self.tl)
             self.tl.tracks[("video", i["trackIndex"])].append(c)
             out.append(c)
+        self.tl.playhead = "01:00:09:00"                 # Resolve moves the playhead to the end of what it laid
         return out
 
 
@@ -88,6 +90,19 @@ def test_a_gap_opens_on_every_track_and_the_markers_move():
     assert lanes(tl) == {"V1": [("a", 0, 100), ("b", 115, 50)], "V2": [("card", 90, 30)],
                          "A1": [("va", 0, 100), ("vb", 115, 50)]}           # the temporary track is gone
     assert sorted(tl.markers) == [40, 115, 135]
+    assert tl.playhead == "01:00:00:00"                  # back where it was before the temporary clip moved it
+
+
+def test_the_playhead_stays_on_the_same_picture():
+    for home, want in (("01:00:03:24", "01:00:03:24"),   # frame 99, before the gap: stays
+                       ("01:00:04:00", "01:00:04:15"),   # frame 100, at it: moves with the picture
+                       ("01:00:05:10", "01:00:06:00")):  # frame 135
+        tl, pool = cut()
+        tl.playhead = home
+        gap.insert(pool, tl, 100, 15, wait=0)
+        assert tl.playhead == want
+        gap.insert(pool, tl, 100, -15, wait=0)
+        assert tl.playhead == home                       # closing it again puts it back
 
 
 def test_closing_puts_it_back_and_refuses_a_gap_that_isnt_empty():

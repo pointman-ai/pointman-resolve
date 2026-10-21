@@ -410,7 +410,9 @@ def op_join(m: Model, op: dict, g: Group) -> None:
     if fades or ps[-1].get("fades"):
         fades["FadeOut"] = (ps[-1].get("fades") or {}).get("FadeOut", 0.0)
         q["fades"] = fades
-    g.put(q, ps[0].get("id"))
+    joined = g.put(q, ps[0].get("id"))
+    for p in ps[1:]:                                       # every piece's content is in it: undo copies grades back
+        m.lineage.setdefault(p.get("id"), []).append(joined["id"])
 
 
 def op_cut(m: Model, op: dict, groups: list[Group], i: int, ctx: dict, upto: int | None = None) -> None:

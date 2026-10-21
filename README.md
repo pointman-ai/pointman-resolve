@@ -160,7 +160,8 @@ Resolve's own values (`GetProperties` keys): Crop, Pan and Tilt in Resolve units
   needs `ok`: what asked for it. The person is then put back on their timeline, page and playhead. Their
   clip selection can't be set back, so a change to it is reported. They switch between the two to A/B.
   `resolve.drop_version` deletes a copy, but only when it isn't open and nobody has edited it. The marker
-  watcher skips copies (`versions.json`), since a copy holds every @ marker of the original.
+  watcher and the follow watcher skip copies (`versions.json`): a copy holds every @ marker of the original,
+  and it isn't the person's cut.
 
 Plans live in `~/.pointman-resolve/plans/<id>/`: `plan.json`, `compiled.json` (every step) and
 `applied.json`. Every apply and undo is in the journal, so diffs and follow mode can tell them from the
@@ -191,7 +192,7 @@ roles = { flips = "V7" }                  # role -> track; by default from the t
 offsets = { C0030 = -175.929 }            # voice - camera, seconds, per camera clip
 ```
 
-Turn it off with the `watch` setting.
+Version timelines (copies made to A/B a plan) aren't watched. Turn it off with the `watch` setting.
 
 ## Guidance for agents
 

@@ -1076,7 +1076,7 @@ def watch_round() -> None:
     if not project or not tl:
         return
     cfg = watch_config(project.GetName())
-    if cfg is None:
+    if cfg is None or plan_versions.is_version(tl.GetUniqueId()):   # a copy to A/B (PFE-12): not the person's cut
         return
     end = tl.GetEndFrame()
     if hid_idle_seconds() < WATCH_IDLE or watching["end"] != end:

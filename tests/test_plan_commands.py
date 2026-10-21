@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from test_extension import sdk
-from test_marker_calls import start
+from test_marker_calls import start, until
 
 pytestmark = pytest.mark.skipif(sdk() is None, reason="no pointman_extension runtime on this machine")
 
@@ -79,6 +79,24 @@ def test_watch_runs_the_checks_on_demand(tmp_path):
         state, r = n.command("resolve.watch", {"transitions": False}, "watch-1")
         assert state == "done" and r["result"]["configured"], r
         assert r["result"]["roles"]["cutout"] == "V5" and isinstance(r["result"]["findings"], list)
+    finally:
+        n.close()
+
+
+@pytest.mark.parametrize("version", [False, True])
+def test_the_watcher_leaves_a_version_alone(tmp_path, monkeypatch, version):
+    monkeypatch.setenv("POINTMAN_RESOLVE_WATCH_EVERY", "0.3")
+    monkeypatch.setenv("POINTMAN_RESOLVE_WATCH_IDLE", "0")
+    home = {"versions.json": {"tl-1": {"name": "Stage 1 · v2", "of": "tl-0", "plan": "p1"}}} if version else {}
+    n = start(tmp_path, read_posts=False, standin=STANDIN, home=home)
+    try:
+        (n.home / "routes.toml").write_text(
+            '[projects."feat-flow-with-spacesheep"]\nthread = 10399\nagent = "editor"\n'
+            '[projects."feat-flow-with-spacesheep".follow]\nroles = { cutout = "V5", graphics = "V6", voice = "A1" }\n',
+            encoding="utf-8")
+        checked = until(lambda: "tl-1" in json.loads((n.home / "watch.json").read_text(encoding="utf-8"))
+                        if (n.home / "watch.json").exists() else False, timeout=6)
+        assert checked is not version                     # the person's timeline is checked; a copy of it isn't
     finally:
         n.close()
 

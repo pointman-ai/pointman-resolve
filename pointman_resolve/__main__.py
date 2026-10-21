@@ -37,7 +37,8 @@ except ImportError:                 # a node from before the rename (thread 2255
 from . import markers, media
 from .plans import apply as plan_apply
 from .plans import store as plan_store
-from .plans.compile import compile_plan
+from .plans import versions as plan_versions
+from .plans.compile import compile_plan, ripples_of, to_base, to_final
 from .plans.model import Model, clock
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
 from .timeline import check as timeline_check
@@ -730,20 +731,38 @@ def preview_cmd(job):
     pid = str(job.params.get("plan") or "")
     saved = plan_store.load(pid)
     base = read(Path(saved["snapshot"]["folder"]) / saved["snapshot"]["file"])
+    out, groups = render_previews(job, pid, base, saved, limit=int(job.params.get("limit", 4)),
+                                  pad=float(job.params.get("pad", 1.0)))
+    return {"plan": pid, "previews": out, "groups": groups}
+
+
+def render_previews(job, pid: str, base: dict, saved: dict, *, limit: int = 4, pad: float = 1.0,
+                    version: str | None = None, copy: dict | None = None) -> tuple[list, int]:
+    """Each op's span drawn from the sources, before above after, posted where the request asked. With
+    `version` and `copy` (the version's own snapshot): the person's timeline above, the version as it really
+    is below, each span mapped onto that timeline (the A/B of resolve.version)."""
     plan = {"id": pid, "ops": saved["ops"]}
     compiled = compile_plan(base, plan, media=saved.get("media") or {})
     if compiled["problems"]:
         raise RuntimeError("the plan has problems: " + "; ".join(compiled["problems"]))
     fps = base["timeline"].get("fps") or 25
-    pad = int(float(job.params.get("pad", 1.0)) * fps)
+    pad = int(pad * fps)
     work = Path(job.work)
     out = []
-    for i, g in enumerate(compiled["groups"][:int(job.params.get("limit", 4))]):
-        upto = compile_plan(base, plan, media=saved.get("media") or {}, upto=i + 1)["model"]
-        before_snap = base if i == 0 else after_snapshot(base, compile_plan(base, plan, media=saved.get("media") or {},
-                                                                             upto=i)["model"])
-        after_snap = after_snapshot(base, upto)
+    ripples = ripples_of(compiled["groups"])
+    for i, g in enumerate(compiled["groups"][:limit]):
         (b0, b1), (a0, a1) = preview_span(g, fps, pad)
+        if copy is not None:                             # both rows from real timelines, not the plan's model
+            before_snap, after_snap = base, copy
+            b0, b1 = to_base(b0, i, ripples), to_base(b1, i, ripples, end=True)
+            a0, a1 = to_final(a0, i, ripples), to_final(a1, i, ripples)
+            if a1 <= a0:
+                a1 = a0 + 1
+        else:
+            upto = compile_plan(base, plan, media=saved.get("media") or {}, upto=i + 1)["model"]
+            before_snap = base if i == 0 else after_snapshot(base, compile_plan(base, plan, media=saved.get("media") or {},
+                                                                                 upto=i)["model"])
+            after_snap = after_snapshot(base, upto)
         rb = timeline_render.render(before_snap, b0, b1, work / f"op{i + 1}-before.mp4", width=640)
         ra = timeline_render.render(after_snap, a0, a1, work / f"op{i + 1}-after.mp4", width=640)
         if not (rb["ok"] and ra["ok"]):
@@ -756,9 +775,11 @@ def preview_cmd(job):
                               "-c:a", "aac", str(both)], capture_output=True, text=True)
         if run.returncode or not both.exists():
             raise RuntimeError(f"couldn't stack before and after: {run.stderr.strip()[-300:]}")
-        caption = (f"Plan {pid}, op {g['op'] + 1} ({g['kind']}): before (top) and after (bottom), "
-                   f"{clock(a0, fps)}–{clock(a1, fps)}. Shadow render from the source files: grades and some effects "
-                   "aren't drawn.")
+        caption = (f"Plan {pid}, op {g['op'] + 1} ({g['kind']}): "
+                   + (f"{base['timeline']['name']} (top) and the version {version!r} (bottom)" if version else
+                      "before (top) and after (bottom)")
+                   + f", {clock(a0, fps)}–{clock(a1, fps)}. Shadow render from the source files: grades not set by "
+                   "our tools and some effects aren't drawn.")
         posted = {}
         if publishes():
             build = media.build_video(both, Path(tempfile.mkdtemp(dir=work)), lambda stage, f: None, height=720)
@@ -769,8 +790,8 @@ def preview_cmd(job):
             job.output(both, kind="video", meta={"plan": pid, "op": g["op"] + 1})
         out.append({"op": g["op"] + 1, "before": [b0, b1], "after": [a0, a1], "file": str(both),
                     "posted": posted.get("message_id") if posted else None,
-                    "not_drawn": sorted(set(rb.get("skipped") or []) | set(ra.get("skipped") or []))[:10]})
-    return {"plan": pid, "previews": out, "groups": len(compiled["groups"])}
+                    "not_drawn": sorted({str(s) for s in (rb.get("skipped") or []) + (ra.get("skipped") or [])})[:10]})
+    return out, len(compiled["groups"])
 
 
 def verify(ro, base: dict, plan: dict, record: plan_apply.Record, media_info: dict) -> dict:
@@ -847,6 +868,65 @@ def apply_cmd(job):
     if stopped:
         result["stopped"] = stopped
     return {**result, **{k: v for k, v in out.items() if k not in result}}
+
+
+@ext.command("resolve.version")
+def version_cmd(job):
+    """A plan from resolve.plan applied to a copy of the open timeline, for the person to A/B: theirs stays as
+    it was, and they're put back on it (timeline, page, playhead). Only when they asked for it (`ok`)."""
+    p = job.params
+    if not str(p.get("ok") or "").strip():
+        raise RuntimeError("a version switches timelines while it's made, so it needs the person's ok: say what "
+                           "asked for it in `ok`")
+    pid = str(p.get("plan") or "")
+    saved = plan_store.load(pid)
+    if saved.get("problems"):
+        raise RuntimeError("the plan has problems: " + "; ".join(saved["problems"]))
+    raw, ro, project, tl = open_timeline()
+    if tl.GetUniqueId() != saved["timeline"]["id"]:
+        raise RuntimeError(f"Resolve has {tl.GetName()!r} open; the plan is for {saved['timeline']['name']!r}")
+    try:
+        framecheck.idle(tl, float(p.get("wait", 3)))
+    except framecheck.Busy as e:
+        raise Retry(str(e)) from None
+    # a version's own record: the plan's applied.json (what resolve.apply and resolve.undo use) is never touched,
+    # so undo can't mistake a version for a change to the person's timeline
+    record = plan_apply.Record(plan_store.folder(pid) / "version.json")
+    if (record.data.get("version") or {}).get("id") and plan_versions.load().get(record.data["version"]["id"]):
+        raise RuntimeError(f"this plan already has a version, {record.data['version']['name']!r}: drop it "
+                           "(resolve.drop_version) or plan again")
+    record.data = {"state": "new", "groups_done": 0, "ids": {}, "partial": None, "log": [], "warnings": [], "plan": pid}
+    base = read(timeline_snapshot.write(ro, timeline_snapshot.store_dir(project.GetName(), tl.GetName()), otio=False))
+    plan = {"id": pid, "ops": saved["ops"], "note": saved.get("note")}
+    n = 2 + sum(1 for v in plan_versions.load().values() if v.get("of") == tl.GetUniqueId())
+    name = str(p.get("name") or f"{tl.GetName()} · v{n} · {(saved.get('note') or pid)[:40]}")
+    try:
+        out = plan_versions.make(raw, base, plan, name, record, media=saved.get("media") or {})
+    except (plan_apply.Stop, ValueError) as e:
+        return {"plan": pid, "ok": False, "stopped": str(e), "version": record.data.get("version"),
+                "log": record.data.get("log", [])[-10:]}
+    copy = out.pop("copy_snapshot", None)
+    try:                                                  # the A/B: what changed, his above, the version below
+        ab, _ = render_previews(job, pid, base, saved, limit=int(p.get("limit", 4)), version=out["version"], copy=copy)
+    except Exception as e:  # noqa: BLE001 - the version is made either way
+        ab = [{"error": f"the A/B render failed: {e}"}]
+    return {"plan": pid, "ok": True, **out, "ab": ab, "warnings": record.data.get("warnings", []),
+            "compare": "switch between the two timelines in Resolve; resolve.drop_version deletes the copy"}
+
+
+@ext.command("resolve.drop_version")
+def drop_version_cmd(job):
+    """Delete a version made by resolve.version: not while it's open, and not once anyone has edited it."""
+    pid = str(job.params.get("plan") or "")
+    record = plan_apply.Record(plan_store.folder(pid) / "version.json")
+    v = record.data.get("version")
+    if not v:
+        return {"plan": pid, "ok": True, "note": "no version of this plan was made"}
+    raw, ro, project, tl = open_timeline()
+    try:
+        return {"plan": pid, "ok": True, **plan_versions.drop(raw, v["id"])}
+    except plan_apply.Stop as e:
+        return {"plan": pid, "ok": False, "stopped": str(e)}
 
 
 @ext.command("resolve.undo")
@@ -996,7 +1076,7 @@ def watch_round() -> None:
     if not project or not tl:
         return
     cfg = watch_config(project.GetName())
-    if cfg is None:
+    if cfg is None or plan_versions.is_version(tl.GetUniqueId()):   # a copy to A/B (PFE-12): not the person's cut
         return
     end = tl.GetEndFrame()
     if hid_idle_seconds() < WATCH_IDLE or watching["end"] != end:
@@ -1104,6 +1184,8 @@ def watch_markers() -> None:
     if not project or not tl:
         return
     state, tid = marker_state(), tl.GetUniqueId()
+    if plan_versions.is_version(tid):                   # a copy we made (PFE-12): its markers are the original's
+        return
     name, pid = project.GetName(), project.GetUniqueId()
     known = marker_projects()
     known.see(name, pid, tid)

@@ -540,6 +540,25 @@ def compile_plan(snap: dict, plan: dict, *, media: dict | None = None, own=OWN_T
             "model": m}
 
 
+def ripples_of(groups: list[dict]) -> list[tuple]:
+    """The cuts a compiled plan makes, in the order it makes them: (group index, start, end)."""
+    return [(i, *g["ripple"]["range"]) for i, g in enumerate(groups) if g.get("ripple")]
+
+
+def to_base(x: int, i: int, ripples: list[tuple], *, end: bool = False) -> int:
+    """Frame x as group i saw it (after the groups before it), on the timeline before the plan."""
+    for _, s, e in reversed([r for r in ripples if r[0] < i]):
+        x = x + (e - s) if (x > s if end else x >= s) else x
+    return x
+
+
+def to_final(x: int, i: int, ripples: list[tuple]) -> int:
+    """Frame x as group i left it, on the timeline after the whole plan (later cuts close up after it)."""
+    for _, s, e in [r for r in ripples if r[0] > i]:
+        x = x - (e - s) if x >= e else (s if x >= s else x)
+    return x
+
+
 def frame_diff(groups: list[Group], end: Model) -> list[dict]:
     """Per group and lane: frames whose picture or sound changes, inside and outside its spans. A ripple
     is compared shifted: after it, frame f shows what f + d showed before."""

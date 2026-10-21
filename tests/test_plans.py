@@ -213,7 +213,7 @@ def test_set_changes_in_place_and_undo_sets_it_back(tmp_path):
     v3 = tl.tracks[("video", 3)][0]
     assert v3.uid == "v3a" and v3.props["ZoomX"] == 1.3 and v3.color == "Orange"
     A.undo(fake.Resolve(tl), snap, plan, rec, sleep=lambda s: None)
-    assert v3.props["ZoomX"] == 1.15
+    assert v3.props["ZoomX"] == 1.15 and v3.color == ""          # no colour before: cleared (seen live)
 
 
 def test_join_makes_one_clip_of_a_through_edit(tmp_path):
@@ -232,7 +232,8 @@ def test_the_writer_only_makes_the_placers_writes():
         with pytest.raises(PermissionError):
             getattr(project, name)
     tl = project.GetCurrentTimeline()
-    for name in ("AddTrack", "DeleteTrack", "SetCurrentTimecode", "SetName"):
+    # SetCurrentTimecode is let through only to put the playhead back after AppendToTimeline moves it
+    for name in ("AddTrack", "DeleteTrack", "SetName", "SetStartTimecode"):
         with pytest.raises(PermissionError):
             getattr(tl, name)
     assert tl.GetName() == "Stage 1 · silences out"
@@ -335,3 +336,36 @@ def test_undo_refuses_before_anything_moves_when_a_clip_crosses_a_cut(tmp_path):
     assert lanes(tl) == cut and not rec.data.get("reopened")
     assert "first frame" in compile_plan(snap, {"ops": [{"op": "cut", "ranges": [[0, 10]], "fill": FILL, "ok": "x"}]},
                                          media=media)["problems"][0]
+
+
+
+def test_the_playhead_stays_where_the_person_left_it(tmp_path):
+    tl = sample()
+    tl.playhead = "01:00:00:12"
+    snap, rec, _ = run(tl, {"ops": [{"op": "slip", "items": ["v3a"], "by": 2}]}, tmp_path)
+    assert tl.playhead == "01:00:00:12"                           # AppendToTimeline moved it; it went back
+
+
+def test_applying_again_after_an_undo_starts_with_no_warnings(tmp_path):
+    cam = fake.Media("/raw/cut-alpha.mov")
+    tl = fake.Timeline({("video", 1): [fake.Item("g1", 90000, 50, 100, cam), fake.Item("g2", 90050, 30, 150, cam)]})
+    plan = {"ops": [{"op": "join", "items": ["g1", "g2"]}]}
+    snap, rec, _ = run(tl, plan, tmp_path)
+    A.undo(fake.Resolve(tl), snap, plan, rec, sleep=lambda s: None)
+    rec.data["warnings"].append("from the last time")
+    again = snap_of(tl)
+    ids = [p["id"] for p in again["items"] if p["kind"] == "video"]   # undo laid both back with new ids
+    tl.writable = True
+    A.apply(fake.Resolve(tl), again, {"ops": [{"op": "join", "items": ids}]}, rec, sleep=lambda s: None)
+    assert rec.data["warnings"] == []
+
+
+def test_undo_of_a_graded_join_gives_every_piece_its_grade_back(tmp_path):
+    cam = fake.Media("/raw/cut-alpha.mov")
+    a, b = fake.Item("g1", 90000, 50, 100, cam), fake.Item("g2", 90050, 30, 150, cam)
+    a.tools = b.tools = {1: ["Primary Balance"]}
+    tl = fake.Timeline({("video", 1): [a, b]})
+    plan = {"ops": [{"op": "join", "items": ["g1", "g2"], "same_grade": "one CDL on both"}]}
+    snap, rec, _ = run(tl, plan, tmp_path)
+    A.undo(fake.Resolve(tl), snap, plan, rec, sleep=lambda s: None)
+    assert [i.tools for i in tl.tracks[("video", 1)]] == [{1: ["Primary Balance"]}] * 2 and not rec.data["warnings"]

@@ -103,6 +103,11 @@ class Item(Obj):
         self.color = color
         return True
 
+    def ClearClipColor(self):
+        self._w("ClearClipColor")
+        self.color = ""
+        return True
+
     def SetClipEnabled(self, on):
         self._w("SetClipEnabled")
         self.enabled = on
@@ -163,6 +168,12 @@ class Timeline(Obj):
         return self.serial
 
     def GetCurrentTimecode(self): return self.playhead
+
+    def SetCurrentTimecode(self, tc):
+        if not self.writable:
+            raise AssertionError("SetCurrentTimecode reached Resolve")
+        self.playhead = tc
+        return True
     def GetSetting(self, name): return {"timelineFrameRate": "25"}.get(name, "")
 
     def AddTrack(self, kind, sub=None):
@@ -329,6 +340,10 @@ class MediaPool(Obj):
                 tl.tracks.setdefault(key, []).append(it)
                 tl.tracks[key].sort(key=lambda x: x.start)
             out.append(it)
+        if out:                                   # Resolve moves the playhead to the end of what it placed
+            last = max(out, key=lambda i: i.start + i.frames)
+            f = last.start + last.frames
+            tl.playhead = f"{f // 90000:02d}:{f // 1500 % 60:02d}:{f // 25 % 60:02d}:{f % 25:02d}"
         return out
 
 

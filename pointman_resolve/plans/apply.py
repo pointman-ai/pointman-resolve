@@ -33,8 +33,9 @@ from ..timeline import journal
 from .compile import compile_plan
 from .model import Model, clock, lane
 
-WRITES = ("AppendToTimeline", "DeleteClips", "SetProperties", "SetFades", "SetClipColor", "SetClipEnabled",
-          "CopyGrades", "AddTransition", "AddMarker", "DeleteMarkerAtFrame")
+WRITES = ("AppendToTimeline", "DeleteClips", "SetProperties", "SetFades", "SetClipColor", "ClearClipColor",
+          "SetClipEnabled", "CopyGrades", "AddTransition", "AddMarker", "DeleteMarkerAtFrame",
+          "SetCurrentTimecode")   # only to put the playhead back: AppendToTimeline moves it to the clip's end
 SKIP_PROPS = {"ZoomGang"}
 PLAIN = (str, int, float, bool, bytes, dict, type(None))
 
@@ -206,8 +207,12 @@ class Runner:
     # -- writing
 
     def append(self, infos: list[dict]) -> list:
+        """AppendToTimeline, retried while Resolve is busy. It moves the playhead to the end of what it placed
+        (seen live, 2026-10-21), so the playhead goes straight back to where the person left it."""
         for attempt in range(self.retries + 1):
             got = [x for x in (self.pool.AppendToTimeline(infos) or []) if x]
+            if self.playhead and self.tl.GetCurrentTimecode() != self.playhead:
+                self.tl.SetCurrentTimecode(self.playhead)
             if got:
                 return got
             if attempt < self.retries:
@@ -271,6 +276,8 @@ class Runner:
                 bad.append("fades")
         if p.get("color") and it.GetClipColor() != p["color"] and not it.SetClipColor(p["color"]):
             bad.append("colour")
+        elif "color" in p and p["color"] == "" and it.GetClipColor() and not it.ClearClipColor():
+            bad.append("colour cleared")                   # an undo back to no colour
         if p.get("enabled") is not None and it.GetClipEnabled() != p["enabled"] and not it.SetClipEnabled(p["enabled"]):
             bad.append("enabled" if p["enabled"] else "disabled")
         have_marks = {int(f) for f in (it.GetMarkers() or {})} if p.get("markers") else set()
@@ -459,6 +466,8 @@ def apply(resolve, snap: dict, plan: dict, record: Record, *, media=None, sleep=
     if groups:                                         # Resolve's own end frame, as the snapshot read it just now
         groups[0]["end_before"] = int(snap["timeline"]["end_frame"] - snap["timeline"]["start_frame"])
     run = Runner(resolve, record, sleep=sleep, wait=wait)
+    if not record.data.get("groups_done") and not record.data.get("partial"):
+        record.data["warnings"] = []                   # a fresh start (again after an undo): only this run's
     record.data["state"] = "applying"
     record.data["plan"] = plan.get("id")
     record.save()

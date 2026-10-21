@@ -5,9 +5,9 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.6.13"
+version = "0.7.0"
 publisher = "aurelio"
-summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, and the timeline as data for agents."
+summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, the timeline as data for agents, and edits as plans: dry run, apply, undo."
 node = ">=0.1,<1"
 platforms = ["macos-arm64", "macos-x86_64"]
 
@@ -153,6 +153,33 @@ lane = "resolve"
 ready_when = "connected"
 outputs = ["image"]
 
+[[commands]]
+kind = "resolve.plan"
+title = "Dry-run an edit plan"
+params = { type = "object", properties = { plan = { type = "object", description = "{\"note\": \"…\", \"ops\": [...]}: see the tool's description." }, ops = { type = "array", description = "The ops, if not given as plan." }, note = { type = "string" } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
+kind = "resolve.preview"
+title = "Preview an edit plan"
+params = { type = "object", required = ["plan"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, limit = { type = "integer", default = 4, description = "Ops to draw." }, pad = { type = "number", default = 1, description = "Seconds either side." }, thread_id = { type = "integer" } }, additionalProperties = false }
+outputs = ["video"]
+
+[[commands]]
+kind = "resolve.apply"
+title = "Apply an edit plan"
+params = { type = "object", required = ["plan"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still first." } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
+[[commands]]
+kind = "resolve.undo"
+title = "Undo an edit plan"
+params = { type = "object", required = ["plan"], properties = { plan = { type = "string" }, wait = { type = "number", default = 3 } }, additionalProperties = false }
+lane = "resolve"
+ready_when = "connected"
+
 [[tools]]
 name = "resolve_render"
 command = "resolve.render"
@@ -174,6 +201,29 @@ returns = "result"
 name = "resolve_set_fallback"
 command = "resolve.set_fallback"
 description = "Where markers from a Resolve project with no route in routes.toml are posted: a board thread, and the agent @pm means there. By default it's where the last marker from a routed project went. Give thread (and agent) to move it; give neither to see it. Reads and writes a file only."
+returns = "result"
+
+[[tools]]
+name = "resolve_plan"
+command = "resolve.plan"
+description = "Dry-run a change to the open Resolve timeline as an edit plan: nothing changes in Resolve. ops (frames are timeline frames from its start, ids from resolve_snapshot): slip {items, by, follow?: [\"V3\",\"V5\"]}; swap {a, b, c, stay?: tracks} ([a,b) and [b,c) trade places); move {items, to?, track?}; replace {item, file, in?}; place {track, file, record, frames, in?, props?}; set {items, props?, fades?, color?, enabled?}; delete {items}; join {items} (a through-edit into one clip); cut {ranges: [[s,e],...], fill: {video, audio, audio_mono}} (ripple delete across every track). An op on the person's own tracks (camera, screen, voice) needs ok: what asked for it. Returns the plan id, problems (it won't apply with any), the frames each op changes per track (nothing outside what it means to change), clutter before/after, and its steps in words. Then resolve_apply."
+returns = "result"
+
+[[tools]]
+name = "resolve_preview"
+command = "resolve.preview"
+description = "Draw a plan from resolve_plan before it's applied: for each op, the shadow render of before (top) and after (bottom) around the change, from the source files, so nothing in Resolve moves. Grades and some effects aren't drawn. Posts the videos in the thread given."
+
+[[tools]]
+name = "resolve_apply"
+command = "resolve.apply"
+description = "Apply a plan from resolve_plan to the open timeline: only while it's been still for `wait` seconds and only if a fresh dry run gives the same steps (otherwise it returns a new dry run). Every clip is checked before it's touched and read back after it's placed; settings, fades, colour, grades (CopyGrades) and centred dissolves are kept. Stops, saying why and what was done, if Resolve or the person gets in the way. Verifies the result. Never saves, switches timelines or starts a background job. resolve_undo puts it back."
+returns = "result"
+
+[[tools]]
+name = "resolve_undo"
+command = "resolve.undo"
+description = "Put back what a plan changed: every clip it placed or moved goes, the snapshot's clips come back with their settings and grades, markers move back. It stops without changing anything if a clip in the way isn't the plan's own (the person edited it since)."
 returns = "result"
 
 [[tools]]

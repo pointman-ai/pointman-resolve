@@ -11,7 +11,7 @@ For agents changing a DaVinci Resolve timeline, and those making graphics or ren
 - Change only the clips you placed, and the ones the person asked about. Their own tracks (camera, screen, voice) need their OK for each change. A marker of theirs asking for a change is that OK.
 - Never build, switch or rename timelines under them.
 - Don't move their playhead while they're working. Read `GetEndFrame()` and `GetCurrentTimecode()` twice, a few seconds apart, and wait if either changes: the first catches edits, the second scrubbing and playback. Put the playhead back afterwards.
-- Every write has a dry run and an undo record. A new version of a file gets a new name (`-v2`); never overwrite media Resolve has open.
+- Every write has a dry run and an undo record: make timeline changes as an edit plan (`resolve_plan` → `resolve_preview` → `resolve_apply`, `resolve_undo`) rather than your own API script. A new version of a file gets a new name (`-v2`); never overwrite media Resolve has open.
 
 **Check in Resolve, not in your head.**
 - Crop, Pan and Tilt are Resolve units, not pixels: one unit is 2 px on a 1920×1080 timeline. Measure other sizes before you trust a formula.

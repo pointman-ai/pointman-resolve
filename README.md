@@ -44,6 +44,10 @@ driven from several threads at once.
 | `resolve.qc` | `from?`, `to?`, `sound?` (true), `sources?` (true), `thread_id?` | A QC report, posted as a document: black frames, flash frames (clips or gaps under 3 frames), screen recordings that are one frozen frame, clutter per track (clips never seen, through-edits, empty or unnamed tracks), and for a range up to 15 min the mix's loudness (target −14 LUFS), true peak and dead air: an estimate from clip levels, without track faders, the bus or Fairlight effects. Resolve and the playhead aren't touched; it holds the lane about 25 s plus 5 s a minute of mix |
 | `resolve.frame_check` | `frame`, `min_psnr?` (30), `wait?` (3 s) | Resolve's own picture of one frame against the shadow render of it: PSNR, the box where they differ, and the clips there with their Zoom/Pan/Tilt/crops (closest fit first). Posts Resolve \| shadow \| difference. Moves the playhead only after the timeline has been still for `wait` seconds, and puts it back |
 | `resolve.calibrate` | `frame?`, `dry_run?`, `wait?` | Pixels per Crop/Pan/Tilt unit at the open timeline's size, measured on Resolve's own frame: the candidate (0.5–4) whose shadow render matches it best. Picks a frame with a moved or cropped clip itself. Sets nothing on any clip; stored per resolution in `calibration.json`, and later snapshots carry it |
+| `resolve.plan` | `plan` or `ops`, `note?` | **Dry run** of an edit plan ([below](#edit-plans)): compiled on a fresh snapshot, with what stops it, the frames each op changes per track, clutter before and after, and its steps in words. Changes nothing |
+| `resolve.preview` | `plan`, `limit?`, `pad?` | The shadow render of each op, before above after, around the change. Nothing in Resolve moves |
+| `resolve.apply` | `plan`, `wait?` | Applies a plan once the timeline has been still for `wait` s and a fresh dry run gives the same steps; checked as it goes, verified after |
+| `resolve.undo` | `plan`, `wait?` | Puts back what the plan changed; stops, changing nothing, if anything in the way isn't the plan's own |
 
 - **Your project is left as it was:** a render saves the project's render settings to a temporary preset
   and restores them after. It also goes back to the page and timeline you were on.
@@ -97,6 +101,62 @@ under it, and a still of that frame. The still is drawn from the source files by
   a delete and re-add, and if Resolve refuses the re-add, the marker is put back as it was. It leaves
   alone a marker you've edited since it was posted.
 - Turn it off with the `marker_calls` setting.
+
+## Edit plans
+
+Resolve 21.1's API can't move, slip or split a clip. So every change to where a clip is or what it shows
+is a delete plus an `AppendToTimeline`, with everything about the clip put back. Edit
+plans do that the same careful way every time (PFE-11; they replace Spacesheep's fix_sync.py,
+fix_sync_constant.py and move_block.py).
+
+A plan is a list of ops on item ids from a snapshot, frames counted from the timeline's start:
+
+| op | fields | what it does |
+|---|---|---|
+| `slip` | `items`, `by`, `follow?` | moves the source in-point by `by` frames, same place and length; `follow` (e.g. `["V3", "V5"]`) takes the pieces stacked inside each clip along |
+| `swap` | `a`, `b`, `c`, `stay?` | `[a, b)` and `[b, c)` trade places on every track but `stay`; markers move with them |
+| `move` | `items`, `to?`, `track?` | to another frame or track, no ripple |
+| `replace` | `item`, `file`, `in?` | another file or in-point in the same place (a `-v2` composite) |
+| `place` | `track`, `file`, `record`, `frames`, `in?`, `props?` | a new clip |
+| `set` | `items`, `props?`, `fades?`, `color?`, `enabled?` | settings, in place |
+| `delete` | `items` | no ripple |
+| `join` | `items`, `same_grade?` | a through-edit (same file running on frame for frame) into one clip. Graded pieces need `same_grade`: how you know their grades match, since Resolve can't read a grade's values on the Edit page |
+| `cut` | `ranges`, `fill` | ripple-deletes each `[s, e)` across every track, last first: clips crossing an edge are split, a track with nothing there gets `fill` (black, or silence, mono where the track is), and every later clip is checked to have moved by exactly `e - s` |
+
+An op on the person's own tracks (named camera, screen or voice) needs `ok`: what asked for it. `props` are
+Resolve's own values (`GetProperties` keys): Crop, Pan and Tilt in Resolve units, never pixels (see Units below).
+
+- **Dry run** (`resolve.plan`): the ops compile against a model of the timeline into remove and lay
+  steps. It refuses what wouldn't survive a re-lay: linked clips, Fusion comps, retimed clips, clip
+  markers, titles and generators. It also refuses a spot that's taken (Resolve would return a clip and
+  place nothing), a source running off either end of its file, and a dissolve with no handles. A
+  frame-map diff shows the frames each op changes per lane. Any change outside what the op means to
+  change is a problem, and a cut is compared shifted.
+- **Units:** sources go to `AppendToTimeline` in the file's own frames. A 60 fps screen recording on a
+  25 fps timeline moves `round(k × 2.4)` of its frames per `k` timeline frames, and is compared in
+  seconds within one of its frames.
+- **Apply** (`resolve.apply`) runs only once the timeline has been still for `wait` seconds, and only
+  if a fresh dry run gives the same steps (its digest). Each op then:
+  1. checks every clip it removes is where the plan says, and every file is in the media pool;
+  2. lays a test clip past the timeline's end. For a graded clip that test clip is its stand-in, and
+     `CopyGrades` puts the grade on it first. Nothing is removed until Resolve has taken a clip; a busy
+     Resolve returns nothing, and it waits, then stops;
+  3. removes, appends and reads every new clip back from its track (place, length, source);
+  4. puts settings, fades, colour, grades and centred dissolves back.
+
+  `applied.json` is written after every step. A stop says why and what was done. Apply never saves,
+  switches timelines, adds tracks, moves the playhead or starts a background job.
+- **Verify:** after applying, the live timeline is read and compared with the model, clip by clip.
+- **Undo** (`resolve.undo`): everything the plan placed or moved goes, and the snapshot's clips come
+  back where they were, grades copied across from what replaced them, markers moved back. A cut is
+  opened again first, the last one made first, with the same rippling speed change `resolve.insert_gap`
+  uses (`timeline/gap.py`), so everything after it moves back as it is. Only what the cut split or took
+  out is laid again. Undo refuses to touch a clip that isn't the plan's own or the snapshot's.
+- **Preview** (`resolve.preview`): the shadow render before and after each op.
+
+Plans live in `~/.pointman-resolve/plans/<id>/`: `plan.json`, `compiled.json` (every step) and
+`applied.json`. Every apply and undo is in the journal, so diffs and follow mode can tell them from the
+person's own edits.
 
 ## Guidance for agents
 

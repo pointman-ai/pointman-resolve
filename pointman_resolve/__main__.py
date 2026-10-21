@@ -23,6 +23,7 @@ Every Resolve call happens on the "resolve" lane, one thread. Core is reached on
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -33,6 +34,10 @@ except ImportError:                 # a node from before the rename (thread 2255
     from mb_extension import Cancelled, Extension, Retry  # type: ignore[no-redef]
 
 from . import markers, media
+from .plans import apply as plan_apply
+from .plans import store as plan_store
+from .plans.compile import compile_plan
+from .plans.model import Model, clock
 from .bridge import ResolveBridge, ResolveUnavailable, hid_idle_seconds, snapshot_digest
 from .timeline import check as timeline_check
 from .timeline import framecheck
@@ -570,6 +575,299 @@ def calibrate(job):
                 f"Calibration at {got['timecode']}: {result.get('px_per_unit')} px per unit "
                 f"({result.get('psnr')} dB, {result.get('margin_db')} dB clear). Resolve | shadow | difference"))
     return result
+
+
+# ------------------------------------------------------------ edit plans (PFE-11)
+
+
+def open_timeline():
+    """(the raw Resolve, a ReadOnly view, project, timeline), or Retry."""
+    try:
+        raw = bridge.connect()
+    except ResolveUnavailable as e:
+        raise unavailable(e) from None
+    ro = ReadOnly(raw)
+    project = ro.GetProjectManager().GetCurrentProject()
+    tl = project.GetCurrentTimeline() if project else None
+    if not project or not tl:
+        raise Retry("no project or timeline open in Resolve")
+    return raw, ro, project, tl
+
+
+def plan_files(plan: dict, snap: dict) -> set[str]:
+    """Files the plan lays that aren't on the timeline yet (their rate and length come from the pool)."""
+    have = {i.get("file") for i in snap["items"]}
+    out = set()
+    for op in plan.get("ops") or []:
+        out |= {str(op[k]) for k in ("file",) if op.get(k)}
+        out |= {str(v) for v in (op.get("fill") or {}).values() if v}
+    return out - have
+
+
+def pool_media(ro, paths: set[str]) -> dict:
+    """path -> {fps, frames} from Resolve's media pool, read only."""
+    if not paths:
+        return {}
+    found, stack = {}, [ro.GetProjectManager().GetCurrentProject().GetMediaPool().GetRootFolder()]
+    while stack and len(found) < len(paths):
+        folder = stack.pop()
+        for c in folder.GetClipList() or []:
+            path = c.GetClipProperty("File Path")
+            if path in paths:
+                frames = c.GetClipProperty("Frames")
+                found[path] = {"fps": float(c.GetClipProperty("FPS") or 0) or None,
+                               "frames": int(frames) if str(frames).isdigit() else None}
+        stack += folder.GetSubFolderList() or []
+    return found
+
+
+def steps_text(compiled: dict, fps: float, limit: int = 40) -> list[str]:
+    """The groups as lines an agent can read back to James."""
+    out = []
+    for g in compiled["groups"]:
+        head = f"op {g['op'] + 1} {g['kind']}"
+        if g.get("ripple"):
+            s, e = g["ripple"]["range"]
+            out.append(f"{head}: cut {clock(s, fps)}–{clock(e, fps)} ({(e - s) / fps:.2f} s) on every track, "
+                       f"{len(g['remove'])} clips split, {sum(1 for x in g['lay'] if x.get('inside'))} pieces cut out")
+            continue
+        for r in g["remove"]:
+            new = [x for x in g["lay"] if x.get("from") == r["id"]]
+            lane = f"{r['kind'][0].upper()}{r['track']}"
+            if not new:
+                out.append(f"{head}: {lane} {clock(r['record'], fps)} {r.get('name')}: removed")
+            for x in new:
+                what = []
+                if (x["kind"], x["track"]) != (r["kind"], r["track"]):
+                    what.append(f"to {x['kind'][0].upper()}{x['track']}")
+                if x["record"] != r["record"]:
+                    what.append(f"at {clock(x['record'], fps)}")
+                if x.get("in") != r.get("in") or x.get("file") != r.get("file"):
+                    what.append(f"source {r.get('in')} → {x.get('in')}" if x.get("file") == r.get("file") else
+                                f"now {Path(x['file']).name} from {x.get('in')}")
+                if x["frames"] != r["frames"]:
+                    what.append(f"{x['frames']} frames")
+                out.append(f"{head}: {lane} {clock(r['record'], fps)} {r.get('name')}: {', '.join(what) or 're-laid'}"
+                           + (" (grade copied)" if x.get("grade_from") else ""))
+        for x in g["lay"]:
+            if not x.get("from"):
+                out.append(f"{head}: {x['kind'][0].upper()}{x['track']} {clock(x['record'], fps)} {Path(x['file']).name} "
+                           f"placed, {x['frames']} frames")
+        for s in g["set"]:
+            out.append(f"{head}: {s['key'][0][0].upper()}{s['key'][1]} {clock(s['record'], fps)}: set "
+                       + ", ".join(k for k in ("props", "fades", "color", "enabled") if k in s))
+        for t in g["transitions"]:
+            out.append(f"{head}: {t['name']} put back at {clock(t['cut'], fps)}")
+    return out[:limit] + ([f"… and {len(out) - limit} more (compiled.json)"] if len(out) > limit else [])
+
+
+def make_plan(ro, project, tl, plan: dict) -> dict:
+    """The dry run: a fresh snapshot, the plan compiled on it, saved under a new id."""
+    path = timeline_snapshot.write(ro, timeline_snapshot.store_dir(project.GetName(), tl.GetName()), otio=False)
+    snap = read(path)
+    media_info = pool_media(ro, plan_files(plan, snap))
+    compiled = compile_plan(snap, plan, media=media_info)
+    model: Model = compiled.pop("model")
+    fps = snap["timeline"].get("fps") or 25
+    pid = plan_store.new_id()
+    ripples = [g["ripple"]["range"] for g in compiled["groups"] if g.get("ripple")]
+    saved = {"id": pid, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "note": plan.get("note") or "",
+             "ops": plan["ops"], "snapshot": {"folder": str(path.parent), "file": path.name},
+             "timeline": {"name": snap["timeline"]["name"], "id": snap["timeline"]["id"], "project": snap["project"]["name"]},
+             "digest": compiled["digest"], "media": media_info, "problems": compiled["problems"]}
+    folder = plan_store.save(saved)
+    (folder / "compiled.json").write_text(json.dumps(compiled, indent=1, default=str), encoding="utf-8")
+    by_op: dict = {}
+    for d in compiled["frames"]:
+        by_op.setdefault(f"op {d['op'] + 1}", {})[d["lane"]] = d["changed"] if not d["outside"] else \
+            f"{d['changed']} ({d['outside']} outside)"
+    return {"plan": pid, "ok": not compiled["problems"], "problems": compiled["problems"],
+            "warnings": compiled["warnings"], "counts": compiled["counts"], "frames_changed": by_op,
+            "clutter": compiled["clutter"], "steps": steps_text(compiled, fps), "end": [model.end, clock(model.end, fps)],
+            "undo": (f"resolve.undo opens the {len(ripples)} cut{'s' * (len(ripples) != 1)} again with a ripple and lays "
+                     "back only what they split or took out" if ripples else "resolve.undo puts back every clip it changes"),
+            "file": str(folder / "compiled.json")}
+
+
+@ext.command("resolve.plan")
+def plan_cmd(job):
+    """The dry run of an edit plan: compiled on a fresh snapshot, with the problems that stop it, the frames
+    it changes per track, the clutter before and after, and its steps. Changes nothing in Resolve."""
+    p = job.params
+    plan = p.get("plan") if isinstance(p.get("plan"), dict) else {"ops": p.get("ops") or [], "note": p.get("note") or ""}
+    _, ro, project, tl = open_timeline()
+    return make_plan(ro, project, tl, plan)
+
+
+def after_snapshot(base: dict, model: Model) -> dict:
+    """The base snapshot with the model's clips: what the shadow renderer draws for "after"."""
+    items = [p for v in model.tracks.values() for p in v] + [t for v in model.transitions.values() for t in v]
+    tl = {**base["timeline"], "end_frame": base["timeline"]["start_frame"] + model.end}
+    return {**base, "items": items, "timeline": tl, "markers": [{**m, "frame": f} for f, m in sorted(model.markers.items())]}
+
+
+def preview_span(g: dict, fps: float, pad: int) -> tuple[list, list]:
+    """[start, end) to render before and after a group: its spans with `pad` frames either side; a cut's
+    edges only (before: across the cut; after: across where it closed)."""
+    if g.get("ripple"):
+        s, e = g["ripple"]["range"]
+        return [max(0, s - pad), e + pad], [max(0, s - pad), s + pad]
+    spans = [x for v in g["spans"].values() for x in v]
+    lo, hi = min(s for s, _ in spans), max(e for _, e in spans)
+    hi = min(hi, lo + int(fps * 20))                     # 20 s at most
+    return [max(0, lo - pad), hi + pad], [max(0, lo - pad), hi + pad]
+
+
+@ext.command("resolve.preview")
+def preview_cmd(job):
+    """A plan's change, drawn by the shadow renderer from the source files: before above, after below, for
+    each op (the first `limit`). Nothing in Resolve moves."""
+    pid = str(job.params.get("plan") or "")
+    saved = plan_store.load(pid)
+    base = read(Path(saved["snapshot"]["folder"]) / saved["snapshot"]["file"])
+    plan = {"id": pid, "ops": saved["ops"]}
+    compiled = compile_plan(base, plan, media=saved.get("media") or {})
+    if compiled["problems"]:
+        raise RuntimeError("the plan has problems: " + "; ".join(compiled["problems"]))
+    fps = base["timeline"].get("fps") or 25
+    pad = int(float(job.params.get("pad", 1.0)) * fps)
+    work = Path(job.work)
+    out = []
+    for i, g in enumerate(compiled["groups"][:int(job.params.get("limit", 4))]):
+        upto = compile_plan(base, plan, media=saved.get("media") or {}, upto=i + 1)["model"]
+        before_snap = base if i == 0 else after_snapshot(base, compile_plan(base, plan, media=saved.get("media") or {},
+                                                                             upto=i)["model"])
+        after_snap = after_snapshot(base, upto)
+        (b0, b1), (a0, a1) = preview_span(g, fps, pad)
+        rb = timeline_render.render(before_snap, b0, b1, work / f"op{i + 1}-before.mp4", width=640)
+        ra = timeline_render.render(after_snap, a0, a1, work / f"op{i + 1}-after.mp4", width=640)
+        if not (rb["ok"] and ra["ok"]):
+            raise RuntimeError(f"the shadow render failed: {rb.get('error') or ra.get('error')}")
+        both = work / f"op{i + 1}.mp4"
+        extra = max(0, (b1 - b0) - (a1 - a0))
+        run = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-y", "-i", rb["out"], "-i", ra["out"],
+                              "-filter_complex", f"[1:v]tpad=stop_mode=clone:stop={extra}[a];[0:v][a]vstack=inputs=2[v]",
+                              "-map", "[v]", "-map", "1:a?", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23",
+                              "-c:a", "aac", str(both)], capture_output=True, text=True)
+        if run.returncode or not both.exists():
+            raise RuntimeError(f"couldn't stack before and after: {run.stderr.strip()[-300:]}")
+        caption = (f"Plan {pid}, op {g['op'] + 1} ({g['kind']}): before (top) and after (bottom), "
+                   f"{clock(a0, fps)}–{clock(a1, fps)}. Shadow render from the source files: grades and some effects "
+                   "aren't drawn.")
+        posted = {}
+        if publishes():
+            build = media.build_video(both, Path(tempfile.mkdtemp(dir=work)), lambda stage, f: None, height=720)
+            posted = publish(build, project=project_for(base["project"]["name"]),
+                             asset_path=f"resolve/{base['project']['name']}/{base['timeline']['name']}/plans/{pid}-op{i + 1}",
+                             title=f"Plan {pid} op {i + 1}", caption=caption, post=posted_for(job))
+        if not posted:
+            job.output(both, kind="video", meta={"plan": pid, "op": g["op"] + 1})
+        out.append({"op": g["op"] + 1, "before": [b0, b1], "after": [a0, a1], "file": str(both),
+                    "posted": posted.get("message_id") if posted else None,
+                    "not_drawn": sorted(set(rb.get("skipped") or []) | set(ra.get("skipped") or []))[:10]})
+    return {"plan": pid, "previews": out, "groups": len(compiled["groups"])}
+
+
+def verify(ro, base: dict, plan: dict, record: plan_apply.Record, media_info: dict) -> dict:
+    """The timeline now against the model of the plan applied: every clip the plan placed, moved or kept on
+    the lanes it touched, by place, length and source."""
+    done = record.data.get("groups_done", 0)
+    if not done:
+        return {"checked": 0, "wrong": []}
+    compiled = compile_plan(base, plan, media=media_info, upto=done)
+    model = compiled["model"]
+    live, _ = timeline_snapshot.take(ro)
+    ids = record.data.get("ids", {})
+    by = {}
+    for it in live["items"]:
+        if it.get("type") != "transition" and it.get("record") is not None:
+            by.setdefault((it["kind"], it["track"]), []).append(it)
+    touched = {model.lane_of(x) for g in compiled["groups"] for x in g["lanes"]}
+    wrong, checked = [], 0
+    for key in touched:
+        want = [(ids.get(p.get("id"), p.get("id")), p["record"], p["frames"]) for p in model.tracks.get(key, [])]
+        have = [(it["id"], it["record"], it["frames"]) for it in sorted(by.get(key, []), key=lambda x: x["record"])]
+        checked += len(want)
+        if want != have:
+            w, h = set(want), set(have)
+            wrong.append({"lane": f"{key[0][0].upper()}{key[1]}", "missing": sorted(w - h, key=lambda x: x[1])[:5],
+                          "unexpected": sorted(h - w, key=lambda x: x[1])[:5]})
+    return {"checked": checked, "wrong": wrong}
+
+
+@ext.command("resolve.apply")
+def apply_cmd(job):
+    """Apply a plan from resolve.plan: only while the timeline is still, only if a fresh dry run gives the
+    same steps, checked as it goes and verified after. Never saves, switches or starts a job."""
+    pid = str(job.params.get("plan") or "")
+    saved = plan_store.load(pid)
+    folder = plan_store.folder(pid)
+    if saved.get("problems"):
+        raise RuntimeError("the plan has problems; fix them and plan again: " + "; ".join(saved["problems"]))
+    record = plan_apply.Record(folder / "applied.json")
+    if record.data["state"] == "applied":
+        return {"plan": pid, "ok": True, "state": "applied", "note": "already applied; resolve.undo puts it back"}
+    raw, ro, project, tl = open_timeline()
+    if tl.GetUniqueId() != saved["timeline"]["id"]:
+        raise RuntimeError(f"Resolve has {tl.GetName()!r} open; the plan is for {saved['timeline']['name']!r}")
+    try:
+        framecheck.idle(tl, float(job.params.get("wait", 3)))
+    except framecheck.Busy as e:
+        raise Retry(str(e)) from None
+    plan = {"id": pid, "ops": saved["ops"], "note": saved.get("note")}
+    media_info = saved.get("media") or {}
+    if not record.data.get("groups_done") and not record.data.get("partial"):
+        path = timeline_snapshot.write(ro, timeline_snapshot.store_dir(project.GetName(), tl.GetName()), otio=False)
+        base = read(path)
+        fresh = compile_plan(base, plan, media=media_info)
+        if fresh["digest"] != saved["digest"] or fresh["problems"]:
+            again = make_plan(ro, project, tl, {"ops": saved["ops"], "note": saved.get("note")})
+            return {"plan": pid, "ok": False, "stopped": "the timeline changed since the dry run, so the steps aren't the "
+                    "ones checked: here's a new dry run to look at and apply", "replan": again}
+        record.data["base"] = {"folder": str(path.parent), "file": path.name}
+        record.save()
+    else:
+        base = read(Path(record.data["base"]["folder"]) / record.data["base"]["file"])
+    stopped = None
+    try:
+        out = plan_apply.apply(raw, base, plan, record, media=media_info)
+    except plan_apply.Stop as e:
+        record.data["state"] = "stopped"
+        record.data["stopped"] = str(e)
+        record.save()
+        stopped, out = str(e), {}
+    result = {"plan": pid, "ok": stopped is None, "state": record.data["state"], "groups_done": record.data["groups_done"],
+              "warnings": record.data.get("warnings", []), "verify": verify(ro, base, plan, record, media_info),
+              "undo": f"resolve.undo with plan {pid}", "log": record.data.get("log", [])[-10:]}
+    if stopped:
+        result["stopped"] = stopped
+    return {**result, **{k: v for k, v in out.items() if k not in result}}
+
+
+@ext.command("resolve.undo")
+def undo_cmd(job):
+    """Put back what a plan changed: everything it placed or moved goes, the snapshot's clips come back with
+    their grades. Stops, changing nothing, if anything in the way isn't the plan's own."""
+    pid = str(job.params.get("plan") or "")
+    saved = plan_store.load(pid)
+    record = plan_apply.Record(plan_store.folder(pid) / "applied.json")
+    if not record.data.get("base"):
+        return {"plan": pid, "ok": True, "note": "nothing of this plan was applied"}
+    raw, ro, project, tl = open_timeline()
+    if tl.GetUniqueId() != saved["timeline"]["id"]:
+        raise RuntimeError(f"Resolve has {tl.GetName()!r} open; the plan is for {saved['timeline']['name']!r}")
+    try:
+        framecheck.idle(tl, float(job.params.get("wait", 3)))
+    except framecheck.Busy as e:
+        raise Retry(str(e)) from None
+    base = read(Path(record.data["base"]["folder"]) / record.data["base"]["file"])
+    plan = {"id": pid, "ops": saved["ops"], "note": saved.get("note")}
+    try:
+        out = plan_apply.undo(raw, base, plan, record, media=saved.get("media") or {},
+                              gap_wait=float(job.params.get("wait", 3)))
+    except plan_apply.Stop as e:
+        return {"plan": pid, "ok": False, "stopped": str(e), "state": record.data["state"]}
+    return {"plan": pid, "ok": True, **out, "state": record.data["state"]}
 
 
 @ext.method("health.check")

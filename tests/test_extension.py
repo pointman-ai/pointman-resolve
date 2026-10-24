@@ -1,16 +1,12 @@
-"""The extension end to end: `python -m pointman_resolve` run as the node runs it, spoken to over
-JSON-RPC on stdin/stdout by a stand-in node. Resolve is made to look absent (RESOLVE_APP points
+"""The extension end to end: `python -m pointman_resolve` run as the node runs it, by the SDK's stand-in node
+(pointman_extension_testing), speaking the typed protocol. Resolve is made to look absent (RESOLVE_APP points
 nowhere), so nothing here reaches the real Resolve; the snapshots come from the fake one.
 
-Needs the node's runtime module, pointman_extension.py: $POINTMAN_EXTENSION_SDK, or the one the
+Needs the node's Python SDK (pointman_extension and its stand-in): $POINTMAN_EXTENSION_SDK, or the one the
 node installed under ~/Library/Application Support/message-board/agent/sdk/."""
 
-import json
 import os
-import queue
-import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -24,67 +20,48 @@ ROOT = Path(__file__).parents[1]
 
 
 def sdk() -> Path | None:
-    given = os.environ.get("POINTMAN_EXTENSION_SDK")
+    """The SDK's folder, if it speaks the typed protocol (it has pointman_extension_types); an older node's is skipped."""
+    given = os.environ.get("POINTMAN_EXTENSION_SDK") or os.environ.get("POINTMAN_EXTENSIONS_SDK")
     if given:
-        return Path(given)
-    found = sorted(Path.home().glob("Library/Application Support/message-board/agent/sdk/*/pointman_extension.py"),
+        return Path(given) if (Path(given) / "pointman_extension_types.py").exists() else None
+    found = sorted(Path.home().glob("Library/Application Support/message-board/agent/sdk/*/pointman_extension_types.py"),
                    key=lambda p: p.stat().st_mtime)
     return found[-1].parent if found else None
 
+
+if sdk() is not None:
+    sys.path.insert(0, str(sdk()))
+    import pointman_extension_types as types  # noqa: E402
+    from pointman_extension_testing import ExtensionFailed, StandInNode  # noqa: E402
 
 pytestmark = pytest.mark.skipif(sdk() is None, reason="no pointman_extension runtime on this machine")
 
 
 class Node:
-    """Just enough of a node: initialize, start commands, ask methods, collect what comes back."""
+    """The SDK's stand-in node, with what these tests ask of it: a command as (state, what came back)."""
 
-    def __init__(self, home: Path, tmp: Path):
-        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "LANG", "LC_CTYPE")}
+    def __init__(self, tmp: Path, env: dict, methods: dict | None = None):
         # Resolve's scripting library resets the process's locale to plain C once it's connected, so
         # files read with the default encoding break on "·" in a timeline's name. An ASCII locale here
         # does the same without Resolve.
-        env.update({"POINTMAN_RESOLVE_HOME": str(home), "RESOLVE_APP": str(tmp / "no-resolve.app"),
-                    "LC_ALL": "en_US.US-ASCII", "PYTHONPATH": os.pathsep.join([str(sdk()), str(ROOT)])})
-        self.p = subprocess.Popen([sys.executable, "-m", "pointman_resolve"], cwd=ROOT, env=env, text=True,
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.msgs: queue.Queue = queue.Queue()
-        threading.Thread(target=self._read, daemon=True).start()
+        env = {**{k: v for k, v in os.environ.items() if k.startswith("POINTMAN_RESOLVE_")},   # a test's own
+               "LC_ALL": "en_US.US-ASCII", "LANG": "C", "PYTHONUTF8": "0",
+               "PYTHONPATH": os.pathsep.join([str(ROOT), str(sdk()), str(ROOT / "tests")]), **env}
+        self.standin = StandInNode(ROOT, settings={"markers": False}, state_dir=tmp / "node", env=env,
+                                   methods=methods or {})
+        self.standin.start()
         self.n = 0
 
-    def _read(self):
-        for line in self.p.stdout:
-            self.msgs.put(json.loads(line))
-
-    def send(self, method, params, rid=True):
+    def command(self, kind: str, params: dict, cid: str, timeout: float = 60) -> tuple[str, dict]:
         self.n += 1
-        msg = {"jsonrpc": "2.0", "method": method, "params": params, **({"id": f"n{self.n}"} if rid else {})}
-        self.p.stdin.write(json.dumps(msg) + "\n")
-        self.p.stdin.flush()
-        return f"n{self.n}"
-
-    def wait(self, match, timeout=20):
-        """The first message `match` accepts; anything else (status events, the extension's own
-        requests to core) is answered or set aside."""
-        while True:
-            m = self.msgs.get(timeout=timeout)
-            if m.get("method") == "core.call" or (m.get("id") and m.get("method")):
-                self.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": m["id"], "error": {"message": "no method"}}) + "\n")
-                self.p.stdin.flush()
-                continue
-            if match(m):
-                return m
-
-    def command(self, kind, params, cid):
-        self.send("command.start", {"id": cid, "kind": kind, "params": params, "work": str(Path(self.work) / cid)})
-        m = self.wait(lambda m: m.get("method") in ("done", "failed") and m["params"]["id"] == cid)
-        return m["method"], m["params"]
+        try:
+            done = self.standin.run(kind, params, cid=cid, timeout=timeout)
+        except ExtensionFailed as e:
+            return "failed", {"error": str(e), "retry": e.retry}
+        return "done", {"result": done.result}
 
     def close(self):
-        self.send("shutdown", {})
-        try:
-            self.p.wait(5)
-        except subprocess.TimeoutExpired:
-            self.p.kill()
+        self.standin.stop()
 
 
 @pytest.fixture
@@ -99,11 +76,7 @@ def node(tmp_path, monkeypatch):
     cam[0].frames = 60                                   # trimmed: the head keeps its id
     cam.insert(1, fake.Item("v2piece", 90060, 30, 570, cam[0].media))
     write(ReadOnly(fake.Resolve(tl)), folder)
-    n = Node(home, tmp_path)
-    n.work = tmp_path / "work"
-    n.send("initialize", {"protocol": 1, "settings": {"markers": False}, "work_dir": str(n.work),
-                          "state_dir": str(tmp_path / "state"), "roots": []})
-    n.wait(lambda m: m.get("id") == "n1")
+    n = Node(tmp_path, {"POINTMAN_RESOLVE_HOME": str(home), "RESOLVE_APP": str(tmp_path / "no-resolve.app")})
     yield n
     n.close()
 
@@ -142,9 +115,8 @@ def test_shadow_and_frame_checks_wait_while_resolve_is_away(node):
 
 def test_health_says_resolve_is_stopped(node):
     for _ in range(40):  # until the lane's first resolve.status has run
-        rid = node.send("health.check", {})
-        [part] = node.wait(lambda m: m.get("id") == rid)["result"]
-        if part["state"] != "unknown":
+        [part] = node.standin.call(types.HealthCheckRequest()).parts
+        if part.state != types.Health.Part.State.STATE_UNSPECIFIED:
             break
         time.sleep(0.25)
-    assert part["id"] == "resolve" and part["state"] == "stopped" and "installed" in part["why"]
+    assert part.id == "resolve" and part.state == types.Health.Part.State.STATE_STOPPED and "installed" in part.why

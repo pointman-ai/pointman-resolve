@@ -183,7 +183,7 @@ def compose(call: Call, snap: dict, mention: str, machine: str | None = None, *,
             lines += [f"- {c}" for c in clips]
     lines.append("")
     call_it = (f"`resolve.marker_done` with `post` = this post's id (tool `resolve_marker_done`, or "
-               f"`run_on_machine`{on})")
+               f"`create_job`{on})")
     lines.append(f"Done? React ✅, or call {call_it}: the marker turns green in Resolve." if ticks else
                  f"Done? {call_it} turns the marker green in Resolve.")
     return "\n".join(lines)

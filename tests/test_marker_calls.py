@@ -3,17 +3,16 @@ behind the bridge's fake mode (a stand-in DaVinciResolveScript) and a stand-in n
 files.publish (the post) and core.call (reading the post back, or refusing as today's node does)."""
 
 import json
-import os
-import queue
-import subprocess
-import sys
-import threading
 import time
 from pathlib import Path
 
 import pytest
 
-from test_extension import ROOT, sdk
+from test_extension import Node as BaseNode
+from test_extension import sdk
+
+if sdk() is not None:
+    import pointman_extension_types as types
 
 pytestmark = pytest.mark.skipif(sdk() is None, reason="no pointman_extension runtime on this machine")
 
@@ -28,7 +27,10 @@ def scriptapp(name):
 '''
 
 
-class Node:
+class Node(BaseNode):
+    """The stand-in node with a fake Resolve behind the bridge's fake mode, answering files.publish (the post) and
+    core.call (reading the post back, or refusing as today's node does)."""
+
     def __init__(self, tmp: Path, read_posts: bool, project: str | None = None, home: dict | None = None,
                  extra: str = "", standin: str = STANDIN):
         api = tmp / "api"
@@ -41,91 +43,38 @@ class Node:
         self.home.mkdir()
         for name, data in (home or {}).items():                  # what the extension remembers already
             (self.home / name).write_text(json.dumps(data), encoding="utf-8")
-        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "LANG", "LC_CTYPE")}
-        env.update({"POINTMAN_RESOLVE_HOME": str(self.home), "MB_RESOLVE_FAKE": "1", "RESOLVE_SCRIPT_API": str(api),
-                    "RESOLVE_SCRIPT_LIB": str(tmp / "fusionscript.so"), "RESOLVE_APP": str(tmp / "Resolve.app"),
-                    "POINTMAN_RESOLVE_MARK_EVERY": "0.5", "POINTMAN_RESOLVE_MARK_POLL": "0",
-                    "POINTMAN_RESOLVE_HEAL_IDLE": "0",
-                    "LC_ALL": "en_US.US-ASCII",
-                    "PYTHONPATH": os.pathsep.join([str(sdk()), str(ROOT), str(ROOT / "tests")])})
-        self.p = subprocess.Popen([sys.executable, "-m", "pointman_resolve"], cwd=ROOT, env=env, text=True,
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.read_posts, self.published, self.ticked = read_posts, [], False
-        self.msgs: queue.Queue = queue.Queue()
-        threading.Thread(target=self._read, daemon=True).start()
-        self.n = 0
+        super().__init__(tmp, {"POINTMAN_RESOLVE_HOME": str(self.home), "MB_RESOLVE_FAKE": "1",
+                               "RESOLVE_SCRIPT_API": str(api), "RESOLVE_SCRIPT_LIB": str(tmp / "fusionscript.so"),
+                               "RESOLVE_APP": str(tmp / "Resolve.app"), "POINTMAN_RESOLVE_MARK_EVERY": "0.5",
+                               "POINTMAN_RESOLVE_MARK_POLL": "0", "POINTMAN_RESOLVE_HEAL_IDLE": "0"},
+                         methods={"files.publish": self.files_publish, "core.call": self.core_call})
 
-    def _answer(self, m):
-        method, rid, p = m["method"], m["id"], m.get("params") or {}
-        if method == "files.publish":
-            self.published.append(p["body"])
-            result = {"asset_id": 1, "version_id": 1, "number": 1, "deduped": False,
-                      "message_id": 776 + len(self.published)}
-        elif method == "core.call" and str(p.get("path")).startswith("/v1/node/messages/"):
+    def files_publish(self, req):
+        self.published.append(req.body)
+        return types.FilesPublishResponse(file=types.FileId(value="file_1"), version=types.FileVersionId(value="ver_1"),
+                                          post=types.PostId(value=f"post_{776 + len(self.published)}"))
+
+    def core_call(self, req):
+        if req.path.startswith("/v1/node/messages/"):
             if not self.read_posts:                    # today's node: not on the extension allowlist
-                return {"jsonrpc": "2.0", "id": rid, "error": {"message": f"resolve may not call GET {p['path']} on core"}}
-            if p["path"] != "/v1/node/messages/777":
-                return {"jsonrpc": "2.0", "id": rid, "result": {"status": 404, "body": {"detail": "no such message"}}}
+                raise RuntimeError(f"resolve may not call GET {req.path} on core")
+            if req.path != "/v1/node/messages/777":
+                return types.CoreCallResponse(status=404, body={"detail": "no such message"})
             emoji = [{"emoji": "✅", "count": 1, "handles": ["editor"]}] if self.ticked else []
-            result = {"status": 200, "body": {"id": 777, "reactions": emoji}}
-        elif method == "core.call":
-            result = {"status": 200, "body": []}       # the notes the old sync asks for: none
-        else:
-            return {"jsonrpc": "2.0", "id": rid, "error": {"message": f"no method {method}"}}
-        return {"jsonrpc": "2.0", "id": rid, "result": result}
-
-    def _read(self):
-        for line in self.p.stdout:
-            m = json.loads(line)
-            if m.get("method") and m.get("id"):        # the extension asking the node something
-                self.p.stdin.write(json.dumps(self._answer(m)) + "\n")
-                self.p.stdin.flush()
-            else:
-                self.msgs.put(m)
-
-    def send(self, method, params):
-        self.n += 1
-        self.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": f"n{self.n}", "method": method, "params": params}) + "\n")
-        self.p.stdin.flush()
-        return f"n{self.n}"
-
-    def wait(self, match, timeout=20):
-        end = time.time() + timeout
-        while time.time() < end:
-            try:
-                m = self.msgs.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            if match(m):
-                return m
-        raise TimeoutError
-
-    def command(self, kind, params, cid):
-        self.send("command.start", {"id": cid, "kind": kind, "params": params, "work": str(self.work / cid)})
-        m = self.wait(lambda m: m.get("method") in ("done", "failed") and m["params"]["id"] == cid)
-        return m["method"], m["params"]
+            return types.CoreCallResponse(status=200, body={"id": 777, "reactions": emoji})
+        return types.CoreCallResponse(status=200, body=[])        # the notes the old sync asks for: none
 
     def marker(self, frame):
         """The timeline marker at `frame`, as the fake Resolve has it now (read through a snapshot)."""
-        state, r = self.command("resolve.snapshot", {"otio": False}, f"snap-{time.time()}")
+        state, r = self.command("resolve.snapshot", {"otio": False}, f"snap-{time.time_ns()}")
         assert state == "done", r
         snap = json.loads(Path(r["result"]["snapshot"]).read_text(encoding="utf-8"))
         return next(m for m in snap["markers"] if m["frame"] == frame)
 
-    def close(self):
-        self.send("shutdown", {})
-        try:
-            self.p.wait(5)
-        except subprocess.TimeoutExpired:
-            self.p.kill()
-
 
 def start(tmp_path, read_posts, **kw):
-    n = Node(tmp_path, read_posts, **kw)
-    n.work = tmp_path / "work"
-    n.send("initialize", {"protocol": 1, "settings": {"markers": False}, "work_dir": str(n.work),
-                          "state_dir": str(tmp_path / "state"), "roots": []})
-    return n
+    return Node(tmp_path, read_posts, **kw)
 
 
 def until(check, timeout=20):

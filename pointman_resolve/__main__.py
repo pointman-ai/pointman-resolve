@@ -29,10 +29,8 @@ import tempfile
 import time
 from pathlib import Path
 
-try:
-    from pointman_extension import Cancelled, Extension, Retry
-except ImportError:                 # a node from before the rename (thread 2255 [3561])
-    from mb_extension import Cancelled, Extension, Retry  # type: ignore[no-redef]
+import pointman_extension_types as types
+from pointman_extension import Cancelled, Extension, Retry
 
 from . import markers, media
 from .plans import apply as plan_apply
@@ -140,11 +138,10 @@ def unavailable(e: ResolveUnavailable) -> Retry:
 
 def core(method: str, path: str, body=None):
     """A call to core through the node: its answer's body, or RuntimeError."""
-    params = {"method": method, "path": path, **({"body": body} if body is not None else {})}
-    r = ext.request("core.call", params, 60) or {}
-    if int(r.get("status") or 0) >= 400:
-        raise RuntimeError(f"{method} {path} -> {r.get('status')}: {str(r.get('body'))[:300]}")
-    return r.get("body")
+    r = ext.request(types.CoreCallRequest(method=method, path=path, body=body), 60)
+    if r.status >= 400:
+        raise RuntimeError(f"{method} {path} -> {r.status}: {str(r.body)[:300]}")
+    return r.body
 
 
 def publishes() -> bool:
@@ -169,7 +166,14 @@ def publish(build: media.Build, *, project: dict, asset_path: str, title: str, c
               "width": f.width, "height": f.height, "duration": f.duration} for f in build.files]
     body = {"project": project, "asset": {"path": asset_path, "title": title, "kind": kind or build.kind},
             "caption": caption, "meta": build.meta, "files": files, "by": "resolve", "post": post}
-    return ext.request("files.publish", {"body": body}, PUBLISH_WAIT) or {}
+    got = ext.request(types.FilesPublishRequest(body=body), PUBLISH_WAIT)
+    # the file, its version and the post the node made, by their numbers (file_2636 is 2636), as kept before
+    return {"asset_id": _number(got.file), "version_id": _number(got.version), "message_id": _number(got.post)}
+
+
+def _number(ref) -> int | None:
+    tail = (ref.value if ref is not None else "").rsplit("_", 1)[-1]
+    return int(tail) if tail.isdigit() else None
 
 
 def project_for(resolve_project: str) -> dict:
@@ -956,21 +960,22 @@ def undo_cmd(job):
 
 
 @ext.method("health.check")
-def health(params):
+def health(req: types.HealthCheckRequest) -> types.HealthCheckResponse:
     """One part, DaVinci Resolve, from the latest resolve.status. Methods run off the resolve lane, so
     this never calls Resolve itself."""
+    State = types.Health.Part.State
     st = dict(last_status)
     if not st:
-        state, why = "unknown", "no status from Resolve yet"
+        state, why = State.STATE_UNSPECIFIED, "no status from Resolve yet"
     elif not st.get("connected"):
         reason = st.get("reason") or "not connected"
-        state, why = ("failing" if "not accepting scripts" in reason else "stopped"), reason
+        state, why = (State.STATE_FAILING if "not accepting scripts" in reason else State.STATE_STOPPED), reason
     elif st.get("blocked"):
-        state, why = "failing", st["blocked"]
+        state, why = State.STATE_FAILING, st["blocked"]
     else:
-        state, why = "ok", None
-    return [{"id": "resolve", "kind": "app", "name": "DaVinci Resolve", "version": st.get("version"),
-             "state": state, "needs": [], "why": why}]
+        state, why = State.STATE_OK, None
+    return types.HealthCheckResponse(parts=[types.Health.Part(
+        id="resolve", kind="app", name="DaVinci Resolve", version=st.get("version"), state=state, why=why)])
 
 
 # ------------------------------------------------------------ markers that call an agent (PFE-30)

@@ -29,7 +29,7 @@ made while Resolve is closed waits until it's open again.
 
 Agents get `resolve_render`, `resolve_still`, `resolve_snapshot`, `resolve_diff`, `resolve_check`, `resolve_shadow`, `resolve_qc`,
 `resolve_frame_check` and `resolve_calibrate` as tools, or call any command on the Mac with
-`run_on_machine`. Every Resolve call runs on one lane, one at a time, since Resolve's API isn't meant to be
+`create_job`. Every Resolve call runs on one lane, one at a time, since Resolve's API isn't meant to be
 driven from several threads at once.
 
 | Kind | Params | What |

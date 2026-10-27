@@ -172,7 +172,7 @@ def publish(build: media.Build, *, project: dict, asset_path: str, title: str, c
 
 
 def _number(ref) -> int | None:
-    tail = (ref.value if ref is not None else "").rsplit("_", 1)[-1]
+    tail = (ref.id if ref is not None else "").rsplit("_", 1)[-1]
     return int(tail) if tail.isdigit() else None
 
 

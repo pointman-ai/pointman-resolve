@@ -52,8 +52,8 @@ class Node(BaseNode):
 
     def files_publish(self, req):
         self.published.append(req.body)
-        return types.FilesPublishResponse(file=types.FileId(value="file_1"), version=types.FileVersionId(value="ver_1"),
-                                          post=types.PostId(value=f"post_{776 + len(self.published)}"))
+        return types.FilesPublishResponse(file=types.FileRef(id="file_1"), version=types.FileVersionRef(id="ver_1"),
+                                          post=types.PostRef(id=f"post_{776 + len(self.published)}"))
 
     def core_call(self, req):
         if req.path.startswith("/v1/node/messages/"):

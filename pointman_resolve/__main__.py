@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -97,6 +98,11 @@ last_status: dict = {}                         # poll_status's latest, for healt
 marks: dict = {"state": None, "projects": None, "fallback": None, "read_posts": None, "polled": 0.0,
               "unrouted": set()}   # PFE-30's; read_posts: unknown yet
 MARK_EVERY = float(os.environ.get("POINTMAN_RESOLVE_MARK_EVERY") or 10)     # tests make these short
+NOTES_EVERY = float(os.environ.get("POINTMAN_RESOLVE_NOTES_EVERY") or 15)  # a round of notes waiting for Resolve
+# core's notes changed (notes.changed), or haven't been read yet: the next round reads them. Core pushes them (node
+# 0.4.6), so nothing polls them; a read that fails goes again the round after
+notes_asked = threading.Event()
+notes_asked.set()
 MARK_POLL = float(os.environ.get("POINTMAN_RESOLVE_MARK_POLL") or 30)
 # a marker back at its own colour usually means James is undoing: recolour only once he's been idle this long
 HEAL_IDLE = float(os.environ.get("POINTMAN_RESOLVE_HEAL_IDLE") or 10)   # James: 10 s is fine (13661)
@@ -959,6 +965,12 @@ def undo_cmd(job):
     return {"plan": pid, "ok": True, **out, "state": record.data["state"]}
 
 
+@ext.method("notes.changed")
+def notes_changed(_req) -> None:
+    """Core's notes changed (the node says so): the next round of markers reads them."""
+    notes_asked.set()
+
+
 @ext.method("health.check")
 def health(req: types.HealthCheckRequest) -> types.HealthCheckResponse:
     """One part, DaVinci Resolve, from the latest resolve.status. Methods run off the resolve lane, so
@@ -1370,17 +1382,22 @@ def set_fallback(job):
 
 def sync_markers() -> None:
     """Notes at a timecode on a Resolve preview, as markers (the Python node's sync_notes and
-    apply_markers, every 15 s)."""
+    apply_markers): core's notes read when they changed (notes_asked), and those waiting for their project to open
+    in Resolve tried each round."""
     if not ext.settings.get("markers", True) or not publishes():
         return
     since = float(state["notes_since"] or 0)
-    try:
-        # a little overlap: core's timestamps are taken before commit, so a note can land with a time
-        # just below a cursor already moved past
-        changed = core("GET", f"/v1/node/notes?since={max(0.0, since - 30)}&include_deleted=true&limit=5000") or []
-    except RuntimeError as e:
-        ext.log(f"couldn't read the notes: {e}")
-        return
+    changed = []
+    if notes_asked.is_set():
+        notes_asked.clear()
+        try:
+            # a little overlap: core's timestamps are taken before commit, so a note can land with a time
+            # just below a cursor already moved past
+            changed = core("GET", f"/v1/node/notes?since={max(0.0, since - 30)}&include_deleted=true&limit=5000") or []
+        except RuntimeError as e:
+            notes_asked.set()
+            ext.log(f"couldn't read the notes: {e}")
+            return
     pending, applied = state["pending"], state["applied"]
     for n in changed:
         since = max(since, float(n.get("updated_at") or 0))
@@ -1446,7 +1463,7 @@ def auto_render() -> None:
 
 
 ext.every(10, poll_status, lane="resolve")
-ext.every(15, sync_markers, lane="resolve")
+ext.every(NOTES_EVERY, sync_markers, lane="resolve")
 ext.every(60, auto_render, lane="resolve")
 ext.every(MARK_EVERY, watch_markers, lane="resolve")
 ext.every(WATCH_EVERY, watch_round, lane="resolve")

@@ -59,9 +59,10 @@ driven from several threads at once.
 
 ## By itself
 
-- **Markers:** every 15 s it reads the notes changed on the board. Each note at a timecode on a Resolve
+- **Markers:** it reads the board's notes as it starts, then again only when the node says they changed
+  (`notes.changed`: core pushes them, from node 0.4.6), so it never polls them. Each note at a timecode on a Resolve
   preview becomes a marker at that frame, titled "Review: …" (purple) or "Resolved: …" (green), and goes
-  once the note is deleted. A note whose project isn't open in Resolve waits until it is.
+  once the note is deleted. A note whose project isn't open in Resolve waits until it is, tried every 15 s.
 - **Auto renders:** with `auto_render_idle_minutes` above 0, it renders the open timeline once the edit
   has changed (clips, trims, tracks or markers) and neither it nor the Mac's keyboard and mouse have been
   touched for that long. An edit that's already been rendered isn't rendered again.

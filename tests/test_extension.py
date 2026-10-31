@@ -40,14 +40,14 @@ pytestmark = pytest.mark.skipif(sdk() is None, reason="no pointman_extension run
 class Node:
     """The SDK's stand-in node, with what these tests ask of it: a command as (state, what came back)."""
 
-    def __init__(self, tmp: Path, env: dict, methods: dict | None = None):
+    def __init__(self, tmp: Path, env: dict, methods: dict | None = None, settings: dict | None = None):
         # Resolve's scripting library resets the process's locale to plain C once it's connected, so
         # files read with the default encoding break on "·" in a timeline's name. An ASCII locale here
         # does the same without Resolve.
         env = {**{k: v for k, v in os.environ.items() if k.startswith("POINTMAN_RESOLVE_")},   # a test's own
                "LC_ALL": "en_US.US-ASCII", "LANG": "C", "PYTHONUTF8": "0",
                "PYTHONPATH": os.pathsep.join([str(ROOT), str(sdk()), str(ROOT / "tests")]), **env}
-        self.standin = StandInNode(ROOT, settings={"markers": False}, state_dir=tmp / "node", env=env,
+        self.standin = StandInNode(ROOT, settings=settings or {"markers": False}, state_dir=tmp / "node", env=env,
                                    methods=methods or {})
         self.standin.start()
         self.n = 0
@@ -79,6 +79,36 @@ def node(tmp_path, monkeypatch):
     n = Node(tmp_path, {"POINTMAN_RESOLVE_HOME": str(home), "RESOLVE_APP": str(tmp_path / "no-resolve.app")})
     yield n
     n.close()
+
+
+def test_notes_are_read_as_it_starts_then_only_when_the_node_says_they_changed(tmp_path):
+    """Core pushes its notes (node 0.4.6): the markers' rounds read them once, then again only after notes.changed."""
+    reads = []
+
+    def core_call(req):
+        if req.method == "GET" and "include_deleted" in req.path:      # the markers' read, not publishes()'s
+            reads.append(req.path)
+        return types.CoreCallResponse(status=200, body=[])
+
+    n = Node(tmp_path, {"POINTMAN_RESOLVE_HOME": str(tmp_path / "home"), "RESOLVE_APP": str(tmp_path / "no-resolve.app"),
+                        "POINTMAN_RESOLVE_NOTES_EVERY": "0.2"},
+             methods={"core.call": core_call}, settings={"markers": True})
+    try:
+        for _ in range(100):
+            if reads:
+                break
+            time.sleep(0.1)
+        time.sleep(1.5)                                    # rounds every 0.2 s: none of them reads again
+        assert len(reads) == 1, reads
+        n.standin.notify(types.NotesChangedRequest())
+        for _ in range(100):
+            if len(reads) > 1:
+                break
+            time.sleep(0.1)
+        time.sleep(0.5)
+        assert len(reads) == 2, reads
+    finally:
+        n.close()
 
 
 def test_diff_the_latest_two(node):

@@ -1,7 +1,7 @@
 # Editing as a team: editor, FX artist, renders
 
 How a cut runs with more than one agent, from editing a 47-minute video with an editor agent in
-Resolve, an FX artist making motion graphics from the thread, and a render agent on another machine, all with
+Resolve, an FX artist making motion graphics from the channel, and a render agent on another machine, all with
 the person who owns the video. SKILLS.md has the short version; this is the detail.
 
 ## Who does what
@@ -11,19 +11,19 @@ the person who owns the video. SKILLS.md has the short version; this is the deta
 | **Editor** | Resolve, through pointman-resolve | the timeline: every change to it | briefs, placements, checks, the report to the person |
 | **FX artist** | chat and their own files | the graphics: cards, transitions, overlays | files that fit their slot, stills, manifest entries |
 | **Render agent** | another machine (a GPU) | renders: composites, cutouts, proxies | deliveries posted to the board |
-| **The person** | Resolve and the thread | the cut and its look | notes as markers, picks between options |
+| **The person** | Resolve and the channel | the cut and its look | notes as markers, picks between options |
 
 - **One writer on the timeline.** Only the editor changes it. The FX artist and the render agent never
   place their own files, even when they could: two writers means two undo stories and a timeline nobody
   can account for.
-- **One thread per video.** Briefs, deliveries, checks and the person's picks all go in the video's
-  thread, so the decision and its history stay in one place. Side threads are for one card's back and
+- **One channel per video.** Briefs, deliveries, checks and the person's picks all go in the video's
+  channel, so the decision and its history stay in one place. Threads are for one card's back and
   forth.
 
 ## The loop
 
 1. **The person leaves a marker** (`@editor …`) at the moment in the cut. It posts itself to the video's
-   thread with a still.
+   channel with a still.
 2. **The editor decides who makes it.** A change to clips, timing or a grade is the editor's. A new
    graphic, or a new version of one, goes to the FX artist as a brief. A missing render goes to the render
    agent.
@@ -92,7 +92,7 @@ sounds come off too. A tick with no card over it sounds for nothing: in one cut,
 
 When a graphic's direction isn't settled, the FX artist makes **two or three real options** in chat:
 stills (or a short render) of each over the real background, each with what it's good for. The person
-picks in the thread, and the editor places the pick and nothing else. The options that weren't picked
+picks in the channel, and the editor places the pick and nothing else. The options that weren't picked
 stay as files, named, in case the person changes their mind.
 
 ## Renders from another machine

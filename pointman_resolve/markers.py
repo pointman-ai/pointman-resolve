@@ -1,9 +1,9 @@
 """Resolve markers that call an agent (Pointman for Editors, PFE-30).
 
 A timeline marker whose name or note starts with `@pm`, `@pointman` or `@<handle>` becomes a post on
-the board: in the thread the project is routed to (~/.pointman-resolve/routes.toml), mentioning that
+the board: in the channel the project is routed to (~/.pointman-resolve/routes.toml), mentioning that
 handle, or the project's agent for @pm / @pointman. A project with no route posts to the fallback:
-the thread and agent of the last marker posted on this machine, which an agent can change
+the channel and agent of the last marker posted on this machine, which an agent can change
 (resolve.set_fallback), and the post says it came there. A renamed project (the same project or
 timeline ID as a routed one) keeps its route. The post has the marker's timecode and note, the clips
 under it, and a still of that frame drawn from the source files (timeline/render.py, never by Resolve).
@@ -80,7 +80,7 @@ def routes_path() -> Path:
 
 EXAMPLE_ROUTES = """\
 # Where Resolve markers that call an agent (@pm, @pointman, @<handle>) are posted, by Resolve project.
-# A project that isn't listed posts to the fallback: the thread and agent of the last marker posted on
+# A project that isn't listed posts to the fallback: the channel and agent of the last marker posted on
 # this machine (fallback.json beside this file; an agent moves it with resolve.set_fallback). A project
 # renamed in Resolve keeps its route: it's known by its project and timeline IDs.
 person = "james"
@@ -89,7 +89,7 @@ person = "james"
 agents = ["editor", "james", "rtx-render", "sheepgfx", "thumbs", "scene", "camgrab", "resolvedoc", "patchbay"]
 
 [projects."feat-flow-with-spacesheep"]
-thread = 10399        # the board thread
+thread = 10399        # the board channel (ch_10399)
 agent = "editor"      # who @pm / @pointman means in this project
 """
 
@@ -102,8 +102,8 @@ def load_routes(path: Path | None = None) -> dict:
 
 
 def route(routes: dict, project: str, handle: str | None, fallback: dict | None = None) -> dict:
-    """{thread, mention, unknown, routed, agent}: a reply in the project's `thread`, or, for a project
-    with no route (`routed` False), in the `fallback`'s; no thread: nowhere to post yet. `mention`: the
+    """{channel, mention, unknown, routed, agent}: a post in the project's channel (its `thread`), or, for a project
+    with no route (`routed` False), in the `fallback`'s; no channel: nowhere to post yet. `mention`: the
     handle called, else `agent` (who @pm means there). A handle that isn't in `agents` goes to `agent`
     instead, and comes back as `unknown`."""
     p = (routes.get("projects") or {}).get(project) or {}
@@ -114,11 +114,11 @@ def route(routes: dict, project: str, handle: str | None, fallback: dict | None 
         unknown, handle = handle, None
     if p.get("thread"):
         agent = p.get("agent") or person
-        return {"thread": int(p["thread"]), "mention": handle or agent, "unknown": unknown, "routed": True,
+        return {"channel": int(p["thread"]), "mention": handle or agent, "unknown": unknown, "routed": True,
                 "agent": agent}
     fb = fallback or {}
     agent = fb.get("agent") or person
-    return {"thread": int(fb["thread"]) if fb.get("thread") else None, "mention": handle or agent,
+    return {"channel": int(fb["channel"]) if fb.get("channel") else None, "mention": handle or agent,
             "unknown": unknown, "routed": False, "agent": agent}
 
 
@@ -169,12 +169,12 @@ def compose(call: Call, snap: dict, mention: str, machine: str | None = None, *,
         lines.append(f"\n_The marker calls `@{unknown}`, which I didn't recognise, so it's here for @{mention}._")
     on = f" on {machine}" if machine else ""
     if fallback:
-        lines.append(f"\n_Project “{snap['project']['name']}” has no route, so it came to this thread (the fallback, "
+        lines.append(f"\n_Project “{snap['project']['name']}” has no route, so it came to this channel (the fallback, "
                      f"where the last marker went). Route it in `~/.pointman-resolve/routes.toml`{on}, or move "
                      f"the fallback with `resolve.set_fallback`._")
     elif renamed:
         lines.append(f"\n_Project “{snap['project']['name']}” isn't in routes.toml, but {renamed[1]} “{renamed[0]}” "
-                     f"(renamed?), so it came to that one's thread._")
+                     f"(renamed?), so it came to that one's channel._")
     clips = under(snap, call.frame)
     if clips:
         lines.append("")
@@ -273,14 +273,15 @@ class Projects:
 
 
 class Fallback:
-    """fallback.json beside the routes: where a project with no route posts. The thread and agent of
+    """fallback.json beside the routes: where a project with no route posts. The channel and agent of
     the last marker posted from a routed project on this machine, unless an agent has moved it since
     (resolve.set_fallback). With no file yet, it starts from the last marker in markers.json."""
 
     def __init__(self, path: Path | None = None, state: State | None = None, routes: dict | None = None):
         self.path = path or journal.home() / "fallback.json"
         try:
-            self.data = json.loads(self.path.read_text(encoding="utf-8")) or None
+            kept = json.loads(self.path.read_text(encoding="utf-8"))
+            self.data = {"channel": kept.pop("thread", None), **kept} if kept else None   # the files say `thread`
         except (OSError, ValueError):
             self.data = None
             posted = sorted((e for e in (state.data.values() if state else ()) if e.get("post") and e.get("project")),
@@ -295,15 +296,16 @@ class Fallback:
     def get(self) -> dict | None:
         return self.data
 
-    def set(self, thread: int, agent: str, *, by: str, project: str | None = None) -> dict | None:
+    def set(self, channel: int, agent: str, *, by: str, project: str | None = None) -> dict | None:
         """The fallback now; the one before is returned."""
         was = self.data
-        self.data = {"thread": int(thread), "agent": str(agent).lstrip("@"), "by": by, "project": project,
+        self.data = {"channel": int(channel), "agent": str(agent).lstrip("@"), "by": by, "project": project,
                      "at": time.time()}
-        if not was or (was.get("thread"), was.get("agent")) != (self.data["thread"], self.data["agent"]):
+        if not was or (was.get("channel"), was.get("agent")) != (self.data["channel"], self.data["agent"]):
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.data, indent=1, ensure_ascii=False), encoding="utf-8")
+            kept = {"thread" if k == "channel" else k: v for k, v in self.data.items()}
+            tmp.write_text(json.dumps(kept, indent=1, ensure_ascii=False), encoding="utf-8")
             tmp.replace(self.path)
         else:
             self.data = was                             # the same place: leave who set it, and when

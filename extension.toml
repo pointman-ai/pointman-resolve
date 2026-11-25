@@ -68,7 +68,7 @@ default = true
 [[commands]]
 kind = "resolve.render"
 title = "Render a preview"
-params = { type = "object", properties = { timeline = { type = "string", description = "The timeline's name; the open one if left out." }, height = { type = "integer", minimum = 144, maximum = 2160 }, thread_id = { type = "integer", description = "Post it in this thread; otherwise in the project's Resolve previews thread." } }, additionalProperties = false }
+params = { type = "object", properties = { timeline = { type = "string", description = "The timeline's name; the open one if left out." }, height = { type = "integer", minimum = 144, maximum = 2160 }, channel_id = { type = "integer", description = "Post it in this channel; otherwise in the project's Resolve previews channel." } }, additionalProperties = false }
 lane = "resolve"
 cancellable = true
 ready_when = "connected"
@@ -77,7 +77,7 @@ outputs = ["video"]
 [[commands]]
 kind = "resolve.still"
 title = "Grab a still"
-params = { type = "object", properties = { thread_id = { type = "integer" } }, additionalProperties = false }
+params = { type = "object", properties = { channel_id = { type = "integer" } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 outputs = ["image"]
@@ -99,7 +99,7 @@ ready_when = "connected"
 [[commands]]
 kind = "resolve.set_fallback"
 title = "Set where unrouted markers go"
-params = { type = "object", properties = { thread = { type = "integer", description = "The board thread markers from a Resolve project with no route are posted in." }, agent = { type = "string", description = "Who @pm / @pointman means there (a handle); the current one if left out." }, by = { type = "string" } }, additionalProperties = false }
+params = { type = "object", properties = { channel = { type = "integer", description = "The board channel markers from a Resolve project with no route are posted in." }, agent = { type = "string", description = "Who @pm / @pointman means there (a handle); the current one if left out." }, by = { type = "string" } }, additionalProperties = false }
 
 [[commands]]
 kind = "resolve.snapshot"
@@ -121,7 +121,7 @@ params = { type = "object", properties = { timeline = { type = "string" }, snaps
 [[commands]]
 kind = "resolve.shadow"
 title = "Shadow-render a range"
-params = { type = "object", required = ["from", "to"], properties = { from = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, to = { type = ["string", "integer"] }, width = { type = "integer", minimum = 320, maximum = 1920, default = 960 }, thread_id = { type = "integer", description = "Post the video in this thread." } }, additionalProperties = false }
+params = { type = "object", required = ["from", "to"], properties = { from = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, to = { type = ["string", "integer"] }, width = { type = "integer", minimum = 320, maximum = 1920, default = 960 }, channel_id = { type = "integer", description = "Post the video in this channel." } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 cancellable = true
@@ -130,7 +130,7 @@ outputs = ["video"]
 [[commands]]
 kind = "resolve.qc"
 title = "QC the timeline"
-params = { type = "object", properties = { from = { type = ["string", "integer"], description = "Timeline frame or time; the start if left out." }, to = { type = ["string", "integer"], description = "The end if left out." }, sound = { type = "boolean", default = true, description = "Loudness, peak and dead air of the mix (ranges up to 15 min)." }, sources = { type = "boolean", default = true, description = "Check every screen recording for a frozen capture." }, thread_id = { type = "integer" } }, additionalProperties = false }
+params = { type = "object", properties = { from = { type = ["string", "integer"], description = "Timeline frame or time; the start if left out." }, to = { type = ["string", "integer"], description = "The end if left out." }, sound = { type = "boolean", default = true, description = "Loudness, peak and dead air of the mix (ranges up to 15 min)." }, sources = { type = "boolean", default = true, description = "Check every screen recording for a frozen capture." }, channel_id = { type = "integer" } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 cancellable = true
@@ -139,7 +139,7 @@ outputs = ["document"]
 [[commands]]
 kind = "resolve.frame_check"
 title = "Check a frame in Resolve against the shadow render"
-params = { type = "object", required = ["frame"], properties = { frame = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, min_psnr = { type = "number", default = 30 }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still before the playhead is moved." }, thread_id = { type = "integer", description = "Post the comparison image in this thread." } }, additionalProperties = false }
+params = { type = "object", required = ["frame"], properties = { frame = { type = ["string", "integer"], description = "Timeline frame (0 = its first), or a time: 'mm:ss.xx', '12.5s'." }, min_psnr = { type = "number", default = 30 }, wait = { type = "number", default = 3, description = "Seconds the timeline must stay still before the playhead is moved." }, channel_id = { type = "integer", description = "Post the comparison image in this channel." } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 outputs = ["image"]
@@ -154,7 +154,7 @@ ready_when = "connected"
 [[commands]]
 kind = "resolve.calibrate"
 title = "Measure Crop/Pan/Tilt px per unit"
-params = { type = "object", properties = { frame = { type = ["string", "integer"], description = "A frame with a moved or cropped clip; picked from the timeline if left out." }, dry_run = { type = "boolean", default = false }, wait = { type = "number", default = 3 }, thread_id = { type = "integer", description = "Post the comparison image in this thread." } }, additionalProperties = false }
+params = { type = "object", properties = { frame = { type = ["string", "integer"], description = "A frame with a moved or cropped clip; picked from the timeline if left out." }, dry_run = { type = "boolean", default = false }, wait = { type = "number", default = 3 }, channel_id = { type = "integer", description = "Post the comparison image in this channel." } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 outputs = ["image"]
@@ -176,7 +176,7 @@ ready_when = "connected"
 [[commands]]
 kind = "resolve.preview"
 title = "Preview an edit plan"
-params = { type = "object", required = ["plan"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, limit = { type = "integer", default = 4, description = "Ops to draw." }, pad = { type = "number", default = 1, description = "Seconds either side." }, thread_id = { type = "integer" } }, additionalProperties = false }
+params = { type = "object", required = ["plan"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, limit = { type = "integer", default = 4, description = "Ops to draw." }, pad = { type = "number", default = 1, description = "Seconds either side." }, channel_id = { type = "integer" } }, additionalProperties = false }
 outputs = ["video"]
 
 [[commands]]
@@ -189,7 +189,7 @@ ready_when = "connected"
 [[commands]]
 kind = "resolve.version"
 title = "Make a version of the timeline from a plan"
-params = { type = "object", required = ["plan", "ok"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, ok = { type = "string", description = "What asked for a version (the person's post or marker): it switches timelines while it's made." }, name = { type = "string" }, limit = { type = "integer", default = 4, description = "Ops drawn in the A/B." }, wait = { type = "number", default = 3 }, thread_id = { type = "integer" } }, additionalProperties = false }
+params = { type = "object", required = ["plan", "ok"], properties = { plan = { type = "string", description = "The plan's id, from resolve.plan." }, ok = { type = "string", description = "What asked for a version (the person's post or marker): it switches timelines while it's made." }, name = { type = "string" }, limit = { type = "integer", default = 4, description = "Ops drawn in the A/B." }, wait = { type = "number", default = 3 }, channel_id = { type = "integer" } }, additionalProperties = false }
 lane = "resolve"
 ready_when = "connected"
 
@@ -210,7 +210,7 @@ ready_when = "connected"
 [[tools]]
 name = "resolve_render"
 command = "resolve.render"
-description = "Render a Resolve timeline (the open one, or one by name) to a small preview with its timeline layout, and post it in the thread given or the project's Resolve previews thread. Takes minutes; returns the request's id."
+description = "Render a Resolve timeline (the open one, or one by name) to a small preview with its timeline layout, and post it in the channel given or the project's Resolve previews channel. Takes minutes; returns the request's id."
 
 [[tools]]
 name = "resolve_still"
@@ -227,7 +227,7 @@ returns = "result"
 [[tools]]
 name = "resolve_set_fallback"
 command = "resolve.set_fallback"
-description = "Where markers from a Resolve project with no route in routes.toml are posted: a board thread, and the agent @pm means there. By default it's where the last marker from a routed project went. Give thread (and agent) to move it; give neither to see it. Reads and writes a file only."
+description = "Where markers from a Resolve project with no route in routes.toml are posted: a board channel, and the agent @pm means there. By default it's where the last marker from a routed project went. Give channel (and agent) to move it; give neither to see it. Reads and writes a file only."
 returns = "result"
 
 [[tools]]
@@ -245,7 +245,7 @@ returns = "result"
 [[tools]]
 name = "resolve_preview"
 command = "resolve.preview"
-description = "Draw a plan from resolve_plan before it's applied: for each op, the shadow render of before (top) and after (bottom) around the change, from the source files, so nothing in Resolve moves. Grades and some effects aren't drawn. Posts the videos in the thread given."
+description = "Draw a plan from resolve_plan before it's applied: for each op, the shadow render of before (top) and after (bottom) around the change, from the source files, so nothing in Resolve moves. Grades and some effects aren't drawn. Posts the videos in the channel given."
 
 [[tools]]
 name = "resolve_apply"

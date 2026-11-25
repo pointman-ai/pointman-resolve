@@ -34,14 +34,14 @@ driven from several threads at once.
 
 | Kind | Params | What |
 |---|---|---|
-| `resolve.render` | `timeline?`, `height?` (144–2160), `thread_id?` | Renders a timeline (the open one, or one by name) to a small MP4 (H.265 where Resolve has it, else H.264) and posts it, with the timeline's layout (tracks, clips and markers), in the thread given or the project's Resolve previews thread. Takes minutes; cancellable |
-| `resolve.still` | `thread_id?` | The frame under the playhead, as a PNG, posted |
+| `resolve.render` | `timeline?`, `height?` (144–2160), `channel_id?` | Renders a timeline (the open one, or one by name) to a small MP4 (H.265 where Resolve has it, else H.264) and posts it, with the timeline's layout (tracks, clips and markers), in the channel given or the project's Resolve previews channel. Takes minutes; cancellable |
+| `resolve.still` | `channel_id?` | The frame under the playhead, as a PNG, posted |
 | `resolve.marker` | `note`, `project`, `timeline` | Mirrors one note as a marker. `null` when that project isn't the one open, so it's tried again later |
 | `resolve.snapshot` | `otio?` (default true) | The open timeline as data, **read only**: every track, item and marker, saved as `snapshot-<utc>.json` with Resolve's OTIO export beside it (below). A few seconds |
 | `resolve.diff` | `timeline?`, `a?`, `b?`, `full?` | What changed between two snapshots of a timeline, by default its latest and the one before. Reads files only |
 | `resolve.check` | `timeline?`, `snapshot?` | A snapshot against the OTIO export taken with it, item by item. Reads files only |
-| `resolve.shadow` | `from`, `to` (≤ 3 min), `width?` (960), `thread_id?` | Any range of the open timeline drawn from the source files with ffmpeg: every track, the audio mixed, posted as a video. Resolve isn't asked to render and the playhead doesn't move, so it's safe while someone edits. Lists what it can't draw yet (grades, transitions, speed, titles). ffmpeg runs niced, so playback in Resolve doesn't stutter |
-| `resolve.qc` | `from?`, `to?`, `sound?` (true), `sources?` (true), `thread_id?` | A QC report, posted as a document: black frames, flash frames (clips or gaps under 3 frames), screen recordings that are one frozen frame, clutter per track (clips never seen, through-edits, empty or unnamed tracks), and for a range up to 15 min the mix's loudness (target −14 LUFS), true peak and dead air: an estimate from clip levels, without track faders, the bus or Fairlight effects. Resolve and the playhead aren't touched; it holds the lane about 25 s plus 5 s a minute of mix |
+| `resolve.shadow` | `from`, `to` (≤ 3 min), `width?` (960), `channel_id?` | Any range of the open timeline drawn from the source files with ffmpeg: every track, the audio mixed, posted as a video. Resolve isn't asked to render and the playhead doesn't move, so it's safe while someone edits. Lists what it can't draw yet (grades, transitions, speed, titles). ffmpeg runs niced, so playback in Resolve doesn't stutter |
+| `resolve.qc` | `from?`, `to?`, `sound?` (true), `sources?` (true), `channel_id?` | A QC report, posted as a document: black frames, flash frames (clips or gaps under 3 frames), screen recordings that are one frozen frame, clutter per track (clips never seen, through-edits, empty or unnamed tracks), and for a range up to 15 min the mix's loudness (target −14 LUFS), true peak and dead air: an estimate from clip levels, without track faders, the bus or Fairlight effects. Resolve and the playhead aren't touched; it holds the lane about 25 s plus 5 s a minute of mix |
 | `resolve.frame_check` | `frame`, `min_psnr?` (30), `wait?` (3 s) | Resolve's own picture of one frame against the shadow render of it: PSNR, the box where they differ, and the clips there with their Zoom/Pan/Tilt/crops (closest fit first). Posts Resolve \| shadow \| difference. Moves the playhead only after the timeline has been still for `wait` seconds, and puts it back |
 | `resolve.calibrate` | `frame?`, `dry_run?`, `wait?` | Pixels per Crop/Pan/Tilt unit at the open timeline's size, measured on Resolve's own frame: the candidate (0.5–4) whose shadow render matches it best. Picks a frame with a moved or cropped clip itself. Sets nothing on any clip; stored per resolution in `calibration.json`, and later snapshots carry it |
 | `resolve.plan` | `plan` or `ops`, `note?` | **Dry run** of an edit plan ([below](#edit-plans)): compiled on a fresh snapshot, with what stops it, the frames each op changes per track, clutter before and after, and its steps in words. Changes nothing |
@@ -74,10 +74,10 @@ is posted on the board for that agent. The post has the marker's timecode, what 
 under it, and a still of that frame. The still is drawn from the source files by
 `timeline/render.py`, so your playhead and page don't move.
 
-- **Where:** `~/.pointman-resolve/routes.toml` maps each Resolve project to a board thread and to the
+- **Where:** `~/.pointman-resolve/routes.toml` maps each Resolve project to a board channel and to the
   agent `@pm` means there. A project you rename in Resolve keeps its route: it's known by its project
   and timeline IDs (`projects.json`).
-- **No route:** a project that isn't listed posts to the **fallback**, and the post says so: the thread
+- **No route:** a project that isn't listed posts to the **fallback**, and the post says so: the channel
   and agent of the last marker posted from a routed project on this machine. An agent moves it with
   `resolve.set_fallback` (tool `resolve_set_fallback`; it's kept in `fallback.json`). On a machine with
   no fallback yet, it starts from the last marker in `markers.json`. If there isn't one, those markers
@@ -182,7 +182,7 @@ for 15 s and the cut has changed since the last check, the agents' tracks are ch
 | see-through | a cut below a full-frame card or flip while it fades (alpha read from the file), or just outside one | none: move the card |
 | chapter | a chapter card (`c01-…`) that an edit took out | none: say so |
 
-What's new since the last post goes to the project's agent in the project's thread, as a document, with a
+What's new since the last post goes to the project's agent in the project's channel, as a document, with a
 dry-run plan for the fixes. The editor previews and applies it, since only the editor changes the timeline. A change
 the person made to the agents' tracks is taken as meant: the checks read the timeline as it is, so nothing is moved
 back. Only projects with a `follow` table in `routes.toml` are watched:

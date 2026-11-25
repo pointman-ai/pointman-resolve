@@ -1058,7 +1058,7 @@ def watch_check(ro, project, tl, cfg: dict, mine: dict, *, snap: dict | None = N
 def watch_post(snap_title: str, project, new: list, plan: dict | None, fps: float, work: Path) -> dict | None:
     routes = markers.load_routes()
     routing = markers.route(routes, project.GetName(), None, marker_fallback().get())
-    if not routing["thread"]:
+    if not routing["channel"]:
         ext.log(f"watch: {len(new)} findings in {project.GetName()!r}, but nowhere to post them")
         return None
     counts: dict = {}
@@ -1074,7 +1074,7 @@ def watch_post(snap_title: str, project, new: list, plan: dict | None, fps: floa
     doc.write_text(timeline_watch.markdown({"findings": new}, snap_title, fps, pid), encoding="utf-8")
     build = media.Build("document", [media.OutFile("document", doc, doc.name, "text/markdown")])
     return publish(build, project=project_for(project.GetName()), asset_path=f"resolve/{project.GetName()}/{snap_title}/watch",
-                   title=f"{snap_title} watch", caption=text, post={"thread_id": routing["thread"], "text": text})
+                   title=f"{snap_title} watch", caption=text, post={"channel_id": routing["channel"], "text": text})
 
 
 def watch_round() -> None:
@@ -1150,7 +1150,7 @@ def post_marker(call: markers.Call, snap: dict, routing: dict, work: Path,
         shot.write_text(text, encoding="utf-8")
         build = media.Build("document", [media.OutFile("document", shot, shot.name, "text/markdown")])
     project, timeline = snap["project"]["name"], snap["timeline"]["name"]
-    post = {"thread_id": routing["thread"], "text": text}
+    post = {"channel_id": routing["channel"], "text": text}
     answer = publish(build, project=project_for(project), asset_path=f"resolve/{project}/{timeline}/markers/{call.key}",
                      title=f"Marker at {markers.clock(call.frame, snap['timeline'].get('fps') or 25)}", caption=text,
                      post=post)
@@ -1237,7 +1237,7 @@ def watch_markers() -> None:
         work = Path(ext.node.get("work_dir") or tempfile.gettempdir()) / "markers"
         for call in todo[:3]:                             # a burst of new markers goes out over a few rounds
             routing = markers.route(routes, renamed[0] if renamed else name, call.handle, fallback.get())
-            if not routing["thread"]:
+            if not routing["channel"]:
                 if name not in marks["unrouted"]:
                     marks["unrouted"].add(name)
                     ext.log(f"markers in {name!r} call agents, but it has no route and there's no fallback yet "
@@ -1263,12 +1263,12 @@ def watch_markers() -> None:
                 state.save()
                 continue
             if not post:
-                ext.log(f"marker at {call.frame}: core stored the still but made no post (thread {routing['thread']})")
+                ext.log(f"marker at {call.frame}: core stored the still but made no post (channel {routing['channel']})")
                 writer.release(claim)
                 state.put(tid, call.key, {"status": "unposted", "frame": call.frame, "at": time.time()})
                 continue
             if routing["routed"]:                         # where the next unrouted project's markers go
-                fallback.set(routing["thread"], routing["agent"], by="marker", project=renamed[0] if renamed else name)
+                fallback.set(routing["channel"], routing["agent"], by="marker", project=renamed[0] if renamed else name)
             tag = f"pm:{post}"
             entry = {"status": "posted", "post": post, "tag": tag, "claim": claim, "mention": routing["mention"],
                      "frame": call.frame, "project": name, "timeline": tl.GetName(), "timeline_id": tid,
@@ -1355,24 +1355,24 @@ def marker_done(job):
 
 @ext.command("resolve.set_fallback")
 def set_fallback(job):
-    """Where markers from a project with no route go: a thread, and who @pm means there. With neither
+    """Where markers from a project with no route go: a channel, and who @pm means there. With neither
     given, where it is now."""
     fb = marker_fallback()
-    thread, agent = job.params.get("thread"), job.params.get("agent")
-    if thread is None and agent is None:
+    channel, agent = job.params.get("channel"), job.params.get("agent")
+    if channel is None and agent is None:
         return {"fallback": fb.get()}
     now = fb.get() or {}
-    if thread is None and not now.get("thread"):
-        raise ValueError("there's no fallback thread yet: give `thread` too")
+    if channel is None and not now.get("channel"):
+        raise ValueError("there's no fallback channel yet: give `channel` too")
     try:
-        thread = int(thread if thread is not None else now["thread"])
+        channel = int(channel if channel is not None else now["channel"])
     except (TypeError, ValueError):
-        raise ValueError(f"`thread` is a board thread's id, not {thread!r}") from None
+        raise ValueError(f"`channel` is a board channel's id, not {channel!r}") from None
     agent = str(agent or now.get("agent") or markers.load_routes().get("person") or "james").lstrip("@").lower()
     hit = markers.TRIGGER.match("@" + agent)
-    if thread <= 0 or not hit or hit[1] != agent:
-        raise ValueError("`thread` is a board thread's id and `agent` a handle")
-    was = fb.set(thread, agent, by=str(job.params.get("by") or "agent"))
+    if channel <= 0 or not hit or hit[1] != agent:
+        raise ValueError("`channel` is a board channel's id and `agent` a handle")
+    was = fb.set(channel, agent, by=str(job.params.get("by") or "agent"))
     marks["unrouted"].clear()                          # say so again if it's ever missing
     return {"fallback": fb.get(), "was": was}
 

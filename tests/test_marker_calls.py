@@ -104,7 +104,7 @@ def test_a_marker_that_calls_an_agent_is_posted_once_and_turns_cyan(node_refusin
     n = node_refusing
     assert until(lambda: n.published), "nothing was posted"
     body = n.published[0]
-    assert body["post"]["thread_id"] == 10399 and body["post"]["text"].startswith("@editor Resolve marker at **0:12.00**")
+    assert body["post"]["channel_id"] == 10399 and body["post"]["text"].startswith("@editor Resolve marker at **0:12.00**")
     assert "> @editor this cut jumps\n> James wrote this" in body["post"]["text"]
     assert "React ✅" not in body["post"]["text"] and "resolve.marker_done" in body["post"]["text"]
     assert body["asset"]["path"].startswith("resolve/feat-flow-with-spacesheep/Stage 1 · silences out/markers/300-")
@@ -144,14 +144,14 @@ def test_an_unrouted_project_waits_for_a_fallback_then_posts_there(tmp_path):
         assert not n.published and n.marker(300)["custom"] == "" and n.marker(300)["color"] == "Red"
         state, r = n.command("resolve.set_fallback", {}, "fb-0")
         assert state == "done" and r["result"]["fallback"] is None, r
-        state, r = n.command("resolve.set_fallback", {"thread": 13661, "agent": "@editor", "by": "editor"}, "fb-1")
-        assert state == "done" and r["result"]["fallback"]["thread"] == 13661 and r["result"]["was"] is None, r
+        state, r = n.command("resolve.set_fallback", {"channel": 13661, "agent": "@editor", "by": "editor"}, "fb-1")
+        assert state == "done" and r["result"]["fallback"]["channel"] == 13661 and r["result"]["was"] is None, r
         assert until(lambda: n.published), "the fallback didn't let it post"
         post = n.published[0]["post"]
-        assert post["thread_id"] == 13661 and post["text"].startswith("@editor Resolve marker at")
-        assert "Project “scratch” has no route, so it came to this thread" in post["text"]
+        assert post["channel_id"] == 13661 and post["text"].startswith("@editor Resolve marker at")
+        assert "Project “scratch” has no route, so it came to this channel" in post["text"]
         assert until(lambda: n.marker(300)["color"] == "Cyan")
-        for i, bad in enumerate(({"thread": "x"}, {"thread": 0}, {"agent": "edi tor"})):
+        for i, bad in enumerate(({"channel": "x"}, {"channel": 0}, {"agent": "edi tor"})):
             state, r = n.command("resolve.set_fallback", bad, f"fb-bad-{i}")
             assert state == "failed", (bad, r)
         assert json.loads((n.home / "fallback.json").read_text(encoding="utf-8"))["agent"] == "editor"
@@ -166,7 +166,7 @@ def test_a_renamed_project_keeps_its_route(tmp_path):
     try:
         assert until(lambda: n.published)
         post = n.published[0]["post"]
-        assert post["thread_id"] == 10399 and post["text"].startswith("@editor Resolve marker at")
+        assert post["channel_id"] == 10399 and post["text"].startswith("@editor Resolve marker at")
         assert "it has the same project ID as “feat-flow-with-spacesheep” (renamed?)" in post["text"]
         assert until(lambda: json.loads((n.home / "fallback.json").read_text(encoding="utf-8"))["thread"] == 10399)
     finally:

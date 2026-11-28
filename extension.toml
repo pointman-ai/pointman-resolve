@@ -5,10 +5,10 @@
 [extension]
 id = "resolve"
 name = "DaVinci Resolve"
-version = "0.13.0"
+version = "0.14.0"
 publisher = "aurelio"
 summary = "Preview renders and stills of your Resolve timelines, board notes as timeline markers, markers that call agents, the timeline as data for agents, and edits as plans: dry run, apply, undo."
-node = ">=0.5.0"
+node = ">=0.6,<1"
 platforms = ["macos-arm64", "macos-x86_64"]
 
 [run]
@@ -20,7 +20,7 @@ runtime = "python3.12"
 # release 9 or later (a node extension carrying a [behavior]).
 [behavior]
 skill = "SKILLS.md"
-clients = ["claude", "codex", "gemini"]
+harnesses = ["claude", "codex", "gemini"]
 files = ["skills"]
 
 [detect]
